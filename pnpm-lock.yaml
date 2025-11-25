@@ -587,7 +587,7 @@ importers:
         version: 5.0.8(eslint@8.57.1)(typescript@5.8.3)
       eslint-plugin-import:
         specifier: ^2.29.1
-        version: 2.31.0(@typescript-eslint/parser@5.62.0(eslint@8.57.1)(typescript@5.8.3))(eslint@8.57.1)
+        version: 2.31.0(@typescript-eslint/parser@6.21.0(eslint@8.57.1)(typescript@5.8.3))(eslint@8.57.1)
       eslint-plugin-prettier:
         specifier: ^4.2.1
         version: 4.2.1(eslint-config-prettier@8.10.0(eslint@8.57.1))(eslint@8.57.1)(prettier@2.8.8)
@@ -783,6 +783,9 @@ importers:
       isomorphic-dompurify:
         specifier: ^2.25.0
         version: 2.25.0
+      jsdom:
+        specifier: ^26.1.0
+        version: 26.1.0
       jsep:
         specifier: ^1.4.0
         version: 1.4.0
@@ -829,8 +832,8 @@ importers:
         specifier: ^3.3.8
         version: 3.3.11
       nc-lib-gui:
-        specifier: 0.263.7
-        version: 0.263.7
+        specifier: 0.263.8
+        version: 0.263.8
       nocodb-sdk:
         specifier: workspace:^
         version: link:../nocodb-sdk
@@ -11001,8 +11004,8 @@ packages:
   natural-compare@1.4.0:
     resolution: {integrity: sha512-OWND8ei3VtNC9h7V60qff3SVobHr996CTwgxubgyQYEpg290h9J0buyECNNJexkFm5sOajh5G116RYA1c8ZMSw==}
 
-  nc-lib-gui@0.263.7:
-    resolution: {integrity: sha512-nkfmSySqmn/yVjWh5dQGyDdagQWgqWYM1DErzf6N7fxv/tQHueeWOESz17rPpZt01ewHi1ClOJRPGANOT0iVIQ==}
+  nc-lib-gui@0.263.8:
+    resolution: {integrity: sha512-BD51v9f5elidB7VEDWg7BIwihuECPao2qwTZyJQEOZeWVLIgQmYwTFGKxyF9cCKL1flkXCJRogJf3fVTKX/vjA==}
 
   negotiator@0.6.3:
     resolution: {integrity: sha512-+EUsqGPLsM+j/zdChZjsnX51g4XrHFOIXwfnCVPGlQk/k5giakcKsuxCObBRu6DSm9opw/O6slWbJdghQM4bBg==}
@@ -27012,7 +27015,7 @@ snapshots:
 
   natural-compare@1.4.0: {}
 
-  nc-lib-gui@0.263.7:
+  nc-lib-gui@0.263.8:
     dependencies:
       express: 4.21.2
     transitivePeerDependencies:

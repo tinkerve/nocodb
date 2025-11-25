@@ -48,9 +48,18 @@ function package_nocodb() {
     pnpm run docker:build || ERROR="package_nocodb failed"
 }
 
+# function build_image() {
+#     # build docker
+#     docker build . -f Dockerfile.local -t nocodb-local || ERROR="build_image failed"
+# }
+# function build_image() {
+#     # build production Dockerfile with litestream
+#     docker build -f packages/nocodb/Dockerfile -t nocodb-local "${SCRIPT_DIR}" || ERROR="build_image failed"
+# }
 function build_image() {
-    # build docker
-    docker build . -f Dockerfile.local -t nocodb-local || ERROR="build_image failed"
+    # build production Dockerfile with litestream
+    cd "${SCRIPT_DIR}"
+    docker build -f packages/nocodb/Dockerfile -t nocodb-local . || ERROR="build_image failed"
 }
 
 function log_message() {
