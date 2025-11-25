@@ -1,5 +1,4 @@
 name: Build and Push NocoDB Image
-
 on:
   push:
     branches:
@@ -8,6 +7,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  working-directory: ./packages/nocodb
 
 jobs:
   build-and-push:
@@ -15,11 +15,44 @@ jobs:
     permissions:
       contents: read
       packages: write
-
     steps:
+      # Add these steps from the first workflow
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 22.12.0
+
+      # Optional: Only if you need to upgrade packages for dev/nightly builds
+      # - name: upgrade packages for nightly build or pr build
+      #   run: |
+      #     export NODE_OPTIONS="--max_old_space_size=16384"
+      #     ... (copy the commands if needed)
+
+      - name: Build nocodb integrations
+        working-directory: ${{ env.working-directory }}
+        run: |
+          cd ../noco-integrations/core
+          pnpm install nocodb-sdk@latest
+          cd ../../..
+          pnpm run integrations:build && pnpm run registerIntegrations
+
+      - name: Build nocodb and docker files
+        run: |
+          pnpm install --ignore-scripts --no-frozen-lockfile
+          pnpm run docker:build
+        working-directory: ${{ env.working-directory }}
+
+      # Now your existing steps
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -28,7 +61,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract version from package.json
-        run: echo "TAG=$(jq -r '.version' package.json)" >> $GITHUB_ENV
+        run: echo "TAG=$(jq -r '.version' packages/nocodb/package.json)" >> $GITHUB_ENV
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -45,7 +78,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: packages/nocodb
           file: packages/nocodb/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
