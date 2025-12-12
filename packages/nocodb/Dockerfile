@@ -1,8 +1,7 @@
 ###########
 # Litestream Builder
 ###########
-FROM golang:bullseye AS lt-builder
-
+FROM golang:latest AS lt-builder
 WORKDIR /usr/src/
 
 RUN apt-get update && apt-get install -y \

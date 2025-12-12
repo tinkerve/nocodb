@@ -1,4 +1,4 @@
-name: Build and Push NocoDB Image
+name: Build and Push NocoDB Image Try
 
 on:
   push:
@@ -8,41 +8,163 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  working-directory: ./packages/nocodb
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
+  buildx:
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
       packages: write
-
+    env:
+      working-directory: ./packages/nocodb
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 22.12.0
+
+      - name: Get Docker Repository
+        id: get-docker-repository
+        run: |
+          DOCKER_REPOSITORY=nocodb
+          DOCKER_BUILD_TAG="${{ github.event.inputs.tag || inputs.tag || 'custom-0.263.8' }}"
+          DOCKER_BUILD_LATEST_TAG=custom-0.263.8
+          TARGET_ENV="${{ github.event.inputs.targetEnv || inputs.targetEnv || 'PROD' }}"
+          CURRENT_VERSION="${{ github.event.inputs.currentVersion || inputs.currentVersion || 'N/A' }}"
+          IS_DAILY="${{ inputs.isDaily || 'N' }}"
+
+          if [[ "$DOCKER_BUILD_TAG" =~ "-beta." ]]; then
+            DOCKER_BUILD_LATEST_TAG=$(echo $DOCKER_BUILD_TAG | awk -F '-beta.' '{print $1}')-beta.latest
+          fi
+
+          if [[ "$TARGET_ENV" == 'DEV' ]]; then
+            if [[ "$CURRENT_VERSION" != 'N/A' ]]; then
+              DOCKER_BUILD_TAG="${CURRENT_VERSION}-${DOCKER_BUILD_TAG}"
+            fi
+            if [[ "$IS_DAILY" == 'Y' ]]; then
+              DOCKER_REPOSITORY=${DOCKER_REPOSITORY}-daily
+            else
+              DOCKER_REPOSITORY=${DOCKER_REPOSITORY}-timely
+            fi
+          fi
+
+          echo "DOCKER_REPOSITORY=${DOCKER_REPOSITORY}" >> $GITHUB_OUTPUT
+          echo "DOCKER_BUILD_TAG=${DOCKER_BUILD_TAG}" >> $GITHUB_OUTPUT
+          echo "DOCKER_BUILD_LATEST_TAG=${DOCKER_BUILD_LATEST_TAG}" >> $GITHUB_OUTPUT
+          echo DOCKER_REPOSITORY: ${DOCKER_REPOSITORY}
+          echo DOCKER_BUILD_TAG: ${DOCKER_BUILD_TAG}
+          echo DOCKER_BUILD_LATEST_TAG: ${DOCKER_BUILD_LATEST_TAG}
+
+      # CRITICAL: Build nocodb-sdk first
+      - name: Build nocodb-sdk
+        run: |
+          cd packages/nocodb-sdk
+          pnpm install --no-frozen-lockfile
+          pnpm run build
+          cd ../..
+
+      - name: upgrade packages for nightly build or pr build
+        if: ${{ github.event.inputs.targetEnv == 'DEV' || inputs.targetEnv == 'DEV' }}
+        run: |
+          export NODE_OPTIONS="--max_old_space_size=16384"
+          NOCODB_SDK_PKG_NAME=nocodb-sdk-daily
+          targetEnv=${{ github.event.inputs.targetEnv || inputs.targetEnv }} targetVersion=${{ github.event.inputs.tag || inputs.tag }} node scripts/bumpNocodbSdkVersion.js &&
+          pnpm --filter=${NOCODB_SDK_PKG_NAME} install --ignore-scripts --no-frozen-lockfile --ignore-workspace && pnpm --filter=${NOCODB_SDK_PKG_NAME} run build &&
+          targetEnv=${{ github.event.inputs.targetEnv || inputs.targetEnv }} node scripts/upgradeNocodbSdk.js &&
+          targetEnv=${{ github.event.inputs.targetEnv || inputs.targetEnv }} targetVersion=${{ github.event.inputs.tag || inputs.tag }} node scripts/bumpNcGuiVersion.js &&
+          pnpm --filter=nc-gui install --ignore-scripts --no-frozen-lockfile &&
+          targetEnv=${{ github.event.inputs.targetEnv || inputs.targetEnv }} targetVersion=${{ github.event.inputs.tag || inputs.tag }} pnpm --filter=nc-gui run build:copy &&
+          targetEnv=${{ github.event.inputs.targetEnv || inputs.targetEnv }} node scripts/upgradeNcGui.js
+
+      - name: Build nocodb integrations
+        working-directory: ${{ env.working-directory }}
+        run: |
+          cd ../noco-integrations/core
+          # extract nocodb-sdk or nocodbsdk-daily package name based on env
+          NOCODB_SDK_PKG_NAME=nocodb-sdk
+          TARGET_ENV="${{ github.event.inputs.targetEnv || inputs.targetEnv || 'PROD' }}"
+          TAG="${{ github.event.inputs.tag || inputs.tag || 'latest' }}"
+
+          if [[ "$TARGET_ENV" == 'DEV' ]]; then
+            NOCODB_SDK_PKG_NAME=nocodb-sdk-daily
+          fi
+
+          # For local builds, use the workspace version
+          if [[ "$TARGET_ENV" == 'PROD' ]]; then
+            pnpm install
+          else
+            pnpm install ${NOCODB_SDK_PKG_NAME}@${TAG}
+          fi
+          
+          cd ../../..
+          pnpm run integrations:build && pnpm run registerIntegrations
+
+      - name: Build nocodb and docker files
+        working-directory: ${{ env.working-directory }}
+        run: |
+          # Install all dependencies - this will link to the local nocodb-sdk workspace
+          pnpm install --no-frozen-lockfile
+          # Build for docker
+          pnpm run docker:build
+          # Clean up to save space
+          pnpm store prune
+          df -h
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2.1.0
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v2.2.1
+
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v2
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version from package.json
-        run: echo "TAG=$(jq -r '.version' package.json)" >> $GITHUB_ENV
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Extract Docker metadata
+      - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v4
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
-            type=raw,value=${{ env.TAG }}
+            type=raw,value=${{ steps.get-docker-repository.outputs.DOCKER_BUILD_TAG }}
+            type=raw,value=${{ steps.get-docker-repository.outputs.DOCKER_BUILD_LATEST_TAG }}
 
-      - name: Build and push Docker image
+      - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -52,3 +174,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          # Temporarily removed arm64 for testing - add back once build succeeds
+          # platforms: linux/amd64,linux/arm64
