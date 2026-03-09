@@ -46,23 +46,21 @@ const nocoExecuteImpl = async (
   dataTree = {},
   rootArgs = null,
 ): Promise<any> => {
-  return timeit('nocoExecuteImpl', () => {
-    // Handle array of resolvers by executing nocoExecute on each and returning a Promise.all
-    if (Array.isArray(resolverObj)) {
-      return Promise.all(
-        resolverObj.map((resolver, i) =>
-          nocoExecuteSingle(
-            requestObj,
-            resolver,
-            (dataTree[i] = dataTree[i] || {}),
-            rootArgs,
-          ),
+  // Handle array of resolvers by executing nocoExecute on each and returning a Promise.all
+  if (Array.isArray(resolverObj)) {
+    return Promise.all(
+      resolverObj.map((resolver, i) =>
+        nocoExecuteSingle(
+          requestObj,
+          resolver,
+          (dataTree[i] = dataTree[i] || {}),
+          rootArgs,
         ),
-      );
-    } else {
-      return nocoExecuteSingle(requestObj, resolverObj, dataTree, rootArgs);
-    }
-  });
+      ),
+    );
+  } else {
+    return nocoExecuteSingle(requestObj, resolverObj, dataTree, rootArgs);
+  }
 };
 const nocoExecuteSingle = async (
   requestObj: XcRequest,
@@ -195,64 +193,59 @@ const nocoExecuteSingle = async (
   const out: any = {}; // Holds the final output
   const resolPromises = []; // Holds all the promises for asynchronous resolution
   for (const key of extractKeys) {
-    timeit(`Process ${key}`, () => {
-      // Extract the field for each key
-      timeit('extractField', () => {
-        extractField(key, rootArgs?.nested?.[key]);
-      });
+    // Extract the field for each key
+    extractField(key, rootArgs?.nested?.[key]);
 
-      // Handle nested request objects by recursively calling nocoExecute
-      if (requestObj[key] && typeof requestObj[key] === 'object') {
-        // How does it know that this is a promise though-
-        res[key] = res[key].then((res1) => {
-          if (Array.isArray(res1)) {
-            // Handle arrays of results by executing nocoExecute on each element
-            return (dataTree[key] = Promise.all(
-              res1.map((r, i) =>
-                nocoExecuteImpl(
-                  requestObj[key] as XcRequest,
-                  r,
-                  dataTree?.[key]?.[i],
-                  Object.assign(
-                    {
-                      nestedPage: rootArgs?.nestedPage,
-                      limit: rootArgs?.nestedLimit,
-                    },
-                    rootArgs?.nested?.[key] || {},
-                  ),
+    // Handle nested request objects by recursively calling nocoExecute
+    if (requestObj[key] && typeof requestObj[key] === 'object') {
+      // How does it know that this is a promise though-
+      res[key] = res[key].then((res1) => {
+        if (Array.isArray(res1)) {
+          // Handle arrays of results by executing nocoExecute on each element
+          return (dataTree[key] = Promise.all(
+            res1.map((r, i) =>
+              nocoExecuteImpl(
+                requestObj[key] as XcRequest,
+                r,
+                dataTree?.[key]?.[i],
+                Object.assign(
+                  {
+                    nestedPage: rootArgs?.nestedPage,
+                    limit: rootArgs?.nestedLimit,
+                  },
+                  rootArgs?.nested?.[key] || {},
                 ),
               ),
-            ));
-          } else if (res1) {
-            // Handle single objects
-            return (dataTree[key] = nocoExecuteImpl(
-              requestObj[key] as XcRequest,
-              res1,
-              dataTree[key],
-              Object.assign(
-                {
-                  nestedPage: rootArgs?.nestedPage,
-                  limit: rootArgs?.nestedLimit,
-                },
-                rootArgs?.nested?.[key] || {},
-              ),
-            ));
-          }
-          return res1; // Return result if no further nesting
-        });
-      }
-      // Push resolved promises to resolPromises array
-      if (res[key]) {
-        resolPromises.push(
-          (async () => {
-            out[key] = await res[key];
-          })(),
-        );
-      }
-    });
+            ),
+          ));
+        } else if (res1) {
+          // Handle single objects
+          return (dataTree[key] = nocoExecuteImpl(
+            requestObj[key] as XcRequest,
+            res1,
+            dataTree[key],
+            Object.assign(
+              {
+                nestedPage: rootArgs?.nestedPage,
+                limit: rootArgs?.nestedLimit,
+              },
+              rootArgs?.nested?.[key] || {},
+            ),
+          ));
+        }
+        return res1; // Return result if no further nesting
+      });
+    }
+    // Push resolved promises to resolPromises array
+    if (res[key]) {
+      resolPromises.push(
+        (async () => {
+          out[key] = await res[key];
+        })(),
+      );
+    }
   }
 
-  // TODO: how do I know within these what causes most time?
   // Wait for all promises to resolve before returning the final output
   await Promise.all(resolPromises);
 

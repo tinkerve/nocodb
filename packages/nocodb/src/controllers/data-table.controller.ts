@@ -20,6 +20,7 @@ import { DataApiLimiterGuard } from '~/guards/data-api-limiter.guard';
 import { GlobalGuard } from '~/guards/global/global.guard';
 import { TenantContext } from '~/decorators/tenant-context.decorator';
 import { NcContext, NcRequest } from '~/interface/config';
+import { Time } from 'src/utils';
 
 @Controller()
 @UseGuards(DataApiLimiterGuard, GlobalGuard)
@@ -29,6 +30,7 @@ export class DataTableController {
   // todo: Handle the error case where view doesnt belong to model
   @Get('/api/v2/tables/:modelId/records')
   @Acl('dataList')
+  @Time()
   async dataList(
     @TenantContext() context: NcContext,
     @Req() req: NcRequest,

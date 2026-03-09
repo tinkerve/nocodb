@@ -32,7 +32,7 @@ import {
   Sort,
   Source,
 } from '~/models';
-import { excludeAttachmentProps } from '~/utils';
+import { excludeAttachmentProps, timeit } from '~/utils';
 import NcConnectionMgrv2 from '~/utils/common/NcConnectionMgrv2';
 
 export type QueryWithCte = {
@@ -348,33 +348,35 @@ export function extractSortsObject(
   aliasColObjMap: { [columnAlias: string]: Column },
   throwErrorIfInvalid = false,
 ): Sort[] {
-  if (!_sorts?.length) return;
+  return timeit('extractSortsObject', () => {
+    if (!_sorts?.length) return;
 
-  let sorts = _sorts;
-  if (!Array.isArray(sorts)) sorts = sorts.split(/\s*,\s*/);
+    let sorts = _sorts;
+    if (!Array.isArray(sorts)) sorts = sorts.split(/\s*,\s*/);
 
-  return sorts.map((s) => {
-    const sort: SortType = { direction: 'asc' };
-    if (s.startsWith('-')) {
-      sort.direction = 'desc';
-      sort.fk_column_id = aliasColObjMap[s.slice(1)]?.id;
-    } else if (s.startsWith('~-')) {
-      sort.direction = 'count-desc';
-      sort.fk_column_id = aliasColObjMap[s.slice(2)]?.id;
-    } else if (s.startsWith('~+')) {
-      sort.direction = 'count-asc';
-      sort.fk_column_id = aliasColObjMap[s.slice(2)]?.id;
-    }
-    // replace + at the beginning if present
-    else {
-      sort.fk_column_id = aliasColObjMap[s.replace(/^\+/, '')]?.id;
-    }
+    return sorts.map((s) => {
+      const sort: SortType = { direction: 'asc' };
+      if (s.startsWith('-')) {
+        sort.direction = 'desc';
+        sort.fk_column_id = aliasColObjMap[s.slice(1)]?.id;
+      } else if (s.startsWith('~-')) {
+        sort.direction = 'count-desc';
+        sort.fk_column_id = aliasColObjMap[s.slice(2)]?.id;
+      } else if (s.startsWith('~+')) {
+        sort.direction = 'count-asc';
+        sort.fk_column_id = aliasColObjMap[s.slice(2)]?.id;
+      }
+      // replace + at the beginning if present
+      else {
+        sort.fk_column_id = aliasColObjMap[s.replace(/^\+/, '')]?.id;
+      }
 
-    if (throwErrorIfInvalid && !sort.fk_column_id) {
-      const fieldNameOrId = s.replace(/^~?[+-]/, '');
-      NcError.get(context).fieldNotFound(fieldNameOrId);
-    }
-    return new Sort(sort);
+      if (throwErrorIfInvalid && !sort.fk_column_id) {
+        const fieldNameOrId = s.replace(/^~?[+-]/, '');
+        NcError.get(context).fieldNotFound(fieldNameOrId);
+      }
+      return new Sort(sort);
+    });
   });
 }
 

@@ -9,7 +9,7 @@ import { validatePayload } from 'src/helpers';
 import type { NcApiVersion } from 'nocodb-sdk';
 import type { LinkToAnotherRecordColumn } from '~/models';
 import type { NcContext } from '~/interface/config';
-import { nocoExecute } from '~/utils';
+import { nocoExecute, Time } from '~/utils';
 import { Column, Model, Source, View } from '~/models';
 import { DatasService } from '~/services/datas.service';
 import { NcError } from '~/helpers/catchError';
@@ -21,6 +21,7 @@ import NcConnectionMgrv2 from '~/utils/common/NcConnectionMgrv2';
 export class DataTableService {
   constructor(protected datasService: DatasService) {}
 
+  @Time()
   async dataList(
     context: NcContext,
     param: {
@@ -301,6 +302,7 @@ export class DataTableService {
     return { count };
   }
 
+  @Time()
   protected async getModelAndView(
     context: NcContext,
     param: {

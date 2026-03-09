@@ -26,6 +26,7 @@ import {
   View,
 } from '~/models';
 import { NcError } from '~/helpers/catchError';
+import { Time } from 'src/utils';
 
 type Ast = {
   [key: string]: 1 | true | null | Ast;

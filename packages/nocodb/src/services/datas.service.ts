@@ -11,7 +11,7 @@ import { getViewAndModelByAliasOrId } from '~/helpers/dataHelpers';
 import getAst from '~/helpers/getAst';
 import { PagedResponseImpl } from '~/helpers/PagedResponse';
 import { Base, Column, Model, Source, View } from '~/models';
-import { nocoExecute } from '~/utils';
+import { nocoExecute, Time, timeit } from '~/utils';
 import NcConnectionMgrv2 from '~/utils/common/NcConnectionMgrv2';
 
 @Injectable()
@@ -20,6 +20,7 @@ export class DatasService {
 
   constructor() {}
 
+  @Time()
   async dataList(
     context: NcContext,
     param: (PathParams | { view?: View; model: Model }) & {
@@ -46,9 +47,11 @@ export class DatasService {
 
     // check for linkColumnId query param and handle it
     if (param.query.linkColumnId) {
-      const linkColumn = await Column.get<LinkToAnotherRecordColumn>(context, {
-        colId: param.query.linkColumnId,
-      });
+      const linkColumn = await timeit('Column.get', () =>
+        Column.get<LinkToAnotherRecordColumn>(context, {
+          colId: param.query.linkColumnId,
+        }),
+      );
 
       if (
         !linkColumn ||
@@ -61,7 +64,9 @@ export class DatasService {
       }
 
       if (linkColumn.colOptions.fk_target_view_id) {
-        view = await View.get(context, linkColumn.colOptions.fk_target_view_id);
+        view = await timeit('View.get', () =>
+          View.get(context, linkColumn.colOptions.fk_target_view_id),
+        );
       }
     }
 
@@ -206,6 +211,7 @@ export class DatasService {
     return await baseModel.delByPk(param.rowId, null, param.cookie);
   }
 
+  @Time()
   async getDataList(
     context: NcContext,
     param: {
@@ -232,26 +238,36 @@ export class DatasService {
       apiVersion,
     } = param;
 
-    const source = await Source.get(context, model.source_id);
+    const source = await timeit('Source.get', () =>
+      Source.get(context, model.source_id),
+    );
 
-    const baseModel =
-      param.baseModel ||
-      (await Model.getBaseModelSQL(context, {
-        id: model.id,
-        viewId: view?.id,
-        dbDriver: await NcConnectionMgrv2.get(source),
-        source,
-      }));
+    const baseModel = await timeit(
+      'Model.getBaseModelSQL',
+      async () =>
+        param.baseModel ||
+        (await Model.getBaseModelSQL(context, {
+          id: model.id,
+          viewId: view?.id,
+          dbDriver: await NcConnectionMgrv2.get(source),
+          source,
+        })),
+    );
 
-    const { ast, dependencyFields } = await getAst(context, {
-      model,
-      query,
-      view: view,
-      throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
-      getHiddenColumn: param.getHiddenColumns,
-      apiVersion,
-      includeSortAndFilterColumns: includeSortAndFilterColumns,
-    });
+    // Takes 0.3s (Consistent on any scale)
+    const { ast, dependencyFields } = await timeit(
+      'getAst',
+      async () =>
+        await getAst(context, {
+          model,
+          query,
+          view: view,
+          throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
+          getHiddenColumn: param.getHiddenColumns,
+          apiVersion,
+          includeSortAndFilterColumns: includeSortAndFilterColumns,
+        }),
+    );
 
     const listArgs: any = dependencyFields;
     try {
@@ -266,30 +282,35 @@ export class DatasService {
     const [count, data] = await Promise.all([
       baseModel.count(listArgs, false, param.throwErrorIfInvalidParams),
       (async () => {
-        let data = [];
-        try {
-          data = await nocoExecute(
-            ast,
-            await baseModel.list(
-              { ...listArgs, apiVersion: param.apiVersion },
-              {
-                ignoreViewFilterAndSort,
-                throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
-                ignorePagination: param.ignorePagination,
-                limitOverride: param.limitOverride,
-              },
-            ),
-            {},
-            listArgs,
-          );
-        } catch (e) {
-          if (e instanceof NcBaseError || e instanceof NcSDKErrorV2) throw e;
-          this.logger.error(e);
-          NcError.internalServerError(
-            'Please check server log for more details',
-          );
-        }
-        return data;
+        return timeit('fetchListFunc', async () => {
+          let data = [];
+          try {
+            // This takes 0.7s on 999s (but the qb itself takes 0.1s, meaning 0.6 is the rest of the logic)
+            // But I think this one is a constant too.
+            const model = await timeit('baseModel.list', () =>
+              baseModel.list(
+                { ...listArgs, apiVersion: param.apiVersion },
+                {
+                  ignoreViewFilterAndSort,
+                  throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
+                  ignorePagination: param.ignorePagination,
+                  limitOverride: param.limitOverride,
+                },
+              ),
+            );
+            data = await timeit('dataService.nocoExecute', async () =>
+              nocoExecute(ast, model, {}, listArgs),
+            );
+            // data = model;
+          } catch (e) {
+            if (e instanceof NcBaseError || e instanceof NcSDKErrorV2) throw e;
+            this.logger.error(e);
+            NcError.internalServerError(
+              'Please check server log for more details',
+            );
+          }
+          return data;
+        });
       })(),
     ]);
     return new PagedResponseImpl(data, {
