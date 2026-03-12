@@ -85,6 +85,7 @@ export default class Model implements TableType {
     return data && new Model(data);
   }
 
+  @Time()
   public async getColumns(
     context: NcContext,
     ncMeta = Noco.ncMeta,
@@ -131,6 +132,7 @@ export default class Model implements TableType {
   }
 
   // @ts-ignore
+  // @Time()
   public async getViews(
     context: NcContext,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -487,6 +489,7 @@ export default class Model implements TableType {
     return null;
   }
 
+  // @Time()
   public static async getBaseModelSQL(
     context: NcContext,
     args: {
@@ -887,6 +890,7 @@ export default class Model implements TableType {
     }, {});
   }
 
+  @Time()
   async getColAliasMapping(context: NcContext) {
     return (await this.getColumns(context)).reduce((o, c) => {
       if (c.column_name) {
@@ -1136,6 +1140,7 @@ export default class Model implements TableType {
     ));
   }
 
+  @Time()
   async getAliasColObjMap(context: NcContext, columns?: Column[]) {
     return (columns || (await this.getColumns(context))).reduce(
       (sortAgg, c) => ({ ...sortAgg, [c.title]: c }),

@@ -1,6 +1,6 @@
 // Define the interface for the request object with possible nested structure
 import { Logger } from '@nestjs/common';
-import { logflow, timeit } from './processUtils';
+import { timeit } from './processUtils';
 
 interface XcRequest {
   [key: string]: XcRequest | 1 | true;

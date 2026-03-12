@@ -1,6 +1,6 @@
 // Define the interface for the request object with possible nested structure
 import { Logger } from '@nestjs/common';
-import { logflow, timeit } from './processUtils';
+import { timeit } from './processUtils';
 
 interface XcRequest {
   [key: string]: XcRequest | 1 | true;
@@ -30,7 +30,6 @@ const nocoExecute = async (
   return nocoExecuteImpl(requestObj, resolverObj, dataTree, rootArgs);
   // (count: 999) This took about 4s (Non-Cached version by Gemini)
   // return nocoExecuteNoDataTree(requestObj, resolverObj, rootArgs);
-  // return fastNocoV1(requestObj, resolverObj, rootArgs);
 };
 /**
  * Execute the request object
@@ -70,6 +69,7 @@ const nocoExecuteSingle = async (
   dataTree = {},
   rootArgs = null,
 ): Promise<any> => {
+  // TODO: let's try scheduling resolver calls?
   const res = {};
 
   /**
@@ -92,9 +92,11 @@ const nocoExecuteSingle = async (
       if (dataTreeObj[key] === undefined || dataTreeObj[key] === null) {
         if (typeof resolver[key] === 'function') {
           // Call resolver function
-          dataTreeObj[key] = timeit('extractNested call resolver', () =>
-            resolver[key](args),
-          );
+          // dataTreeObj[key] = timeit(
+          //   `extractNested resolver[${key}]`,
+          //   resolver[key](args),
+          // );
+          dataTreeObj[key] = resolver[key](args);
         } else if (typeof resolver[key] === 'object') {
           dataTreeObj[key] = Promise.resolve(resolver[key]); // Resolve object directly
         } else if (dataTreeObj?.__proto__?.__columnAliases?.[key]) {
@@ -114,9 +116,7 @@ const nocoExecuteSingle = async (
         // If the key is a function, invoke it with args
         dataTreeObj.__proto__ = {
           ...dataTreeObj.__proto__,
-          [key]: timeit('extractNested call dataTree', () =>
-            dataTreeObj[key](args),
-          ),
+          [key]: dataTreeObj[key](args),
         };
       }
 
@@ -153,9 +153,7 @@ const nocoExecuteSingle = async (
       if (resolverObj) {
         // Resolve if it's a function, object, or value
         if (typeof resolverObj[key] === 'function') {
-          res[key] = timeit('extractField call resolver', () =>
-            resolverObj[key](args),
-          ); // Call function
+          res[key] = resolverObj[key](args);
         } else if (typeof resolverObj[key] === 'object') {
           res[key] = Promise.resolve(resolverObj[key]); // Resolve object
         } else {
@@ -194,12 +192,10 @@ const nocoExecuteSingle = async (
 
   const out: any = {}; // Holds the final output
   const resolPromises = []; // Holds all the promises for asynchronous resolution
-  for (const key of extractKeys) {
-    timeit(`Process ${key}`, () => {
+  timeit('dispatch resolvers', () => {
+    for (const key of extractKeys) {
       // Extract the field for each key
-      timeit('extractField', () => {
-        extractField(key, rootArgs?.nested?.[key]);
-      });
+      extractField(key, rootArgs?.nested?.[key]);
 
       // Handle nested request objects by recursively calling nocoExecute
       if (requestObj[key] && typeof requestObj[key] === 'object') {
@@ -249,234 +245,102 @@ const nocoExecuteSingle = async (
           })(),
         );
       }
-    });
-  }
+    }
+  });
 
   // TODO: how do I know within these what causes most time?
   // Wait for all promises to resolve before returning the final output
-  await Promise.all(resolPromises);
+  await timeit('await resolvers to finish', () => Promise.all(resolPromises));
 
   return out; // Return the final resolved output
 };
 
 export { nocoExecute };
 
-async function fastNocoV1(
-  requestObj: XcRequest,
-  resolverObj?: ResolverObj | ResolverObj[],
-  // NOTE: I think dataTree is used to keep "current progress" as function calls.
-  // dataTree = {},
-  rootArgs: any = {},
-) {
-  if (!resolverObj) return {}; // TODO: Need to doublecheck this
-  if (Array.isArray(resolverObj))
-    return Promise.all(resolverObj.map((o, i) => fastNocoV1(requestObj, o)));
-
-  // TODO: need to dispatch these also to reduce the recomputation of this
-  const requestFields = requestObj
-    ? Object.keys(requestObj).filter((k) => requestObj[k])
-    : Object.keys(resolverObj);
-
-  const tasks = [] as (() => Promise<any>)[];
-  const scheduleTask = (fn: () => Promise<any>) => {
-    tasks.push(fn);
-  };
-  const flushTasks = () => Promise.all(tasks.map((t) => t()));
-
-  type ProcessTask = {
-    key: string;
-    src: Record<string, any>;
-    dest: Record<string, any>;
-    req: XcRequest[keyof XcRequest];
-  };
-  const queue = [] as Array<ProcessTask>;
-  const computed = {};
-  // TODO: need to initialize the task queue
-
-  // TODO: reconcile and dispatch, I think that's the pattern here.
-  // TODO: somehow need to statically analyse this and dispatch tasks in threads.. I think
-  while (queue.length > 0) {
-    const { key: fieldName, src, dest, req } = queue.pop()!;
-    const aliases = resolverObj?.__proto__?.__columnAliases;
-
-    // For fields
-    const alias: string | undefined = aliases?.[fieldName];
-    const aliasPath: string[] | undefined = aliases?.[fieldName]?.path;
-    const dataOrResolver = src[fieldName];
-    const resolverArgs = rootArgs?.nested?.[fieldName];
-
-    switch (true) {
-      case !alias: {
-        dest[fieldName] =
-          typeof dataOrResolver === 'function'
-            ? dataOrResolver(resolverArgs ?? {})
-            : dataOrResolver;
-        break;
-      }
-      case !isNil(alias): {
-        // dest[fieldName] = extractNested here...
-        // NOTE: I think this is resolved nested
-        break;
-      }
-    }
-  }
-
-  // TODO: maybe should make recursive manually (using queue)
-  for (const fieldName of requestFields) {
-    if (!requestObj[fieldName]) {
-      logger.warn(`Unable to process field '${fieldName}'`);
-      continue;
-    }
-
-    const fieldAlias: string | undefined =
-      resolverObj?.__proto__?.__columnAliases?.[fieldName];
-    const fieldAliasPath: string[] | undefined =
-      resolverObj?.__proto__?.__columnAliases?.[fieldName]?.path;
-    const fieldDataOrResolver = resolverObj[fieldName];
-    const fieldArgs = rootArgs?.nested?.[fieldName];
-
-    switch (true) {
-      case !fieldAlias: {
-        computed[fieldName] =
-          typeof fieldDataOrResolver === 'function'
-            ? fieldDataOrResolver(fieldArgs ?? {})
-            : fieldDataOrResolver;
-        break;
-      }
-      case !isNil(fieldAlias): {
-        // TODO: resolve path (but this should probably be deferred since it has await)
-        const path = fieldAliasPath ?? [];
-
-        let sourceResolverObjPtr = resolverObj; // Points to whatever is nested now
-        let outPtr = computed;
-        for (const key of path) {
-          const nestedDataOrResolver = sourceResolverObjPtr[key];
-          const nestedFieldAlias: string | undefined =
-            sourceResolverObjPtr?.__proto__?.__columnAliases?.[key];
-          const nestedFieldAliasPath: string | undefined =
-            sourceResolverObjPtr?.__proto__?.__columnAliases?.[key].path;
-
-          // TODO: extract nested func needs the additional arguments
-          // TODO: continue here, follow the condition in `extractNested`
-          switch (true) {
-            case typeof nestedDataOrResolver === 'function': {
-              outPtr[key] = nestedDataOrResolver(
-                Object.assign({
-                  ...(fieldArgs ?? {}),
-                  nestedPage: rootArgs?.nestedPage,
-                  limit: rootArgs?.nestedLimit,
-                }),
-              );
-            }
-            case !isNil(nestedFieldAlias): {
-              // TODO: this needs recursion fak (maybe use the queue system)
-              break;
-            }
-            default: {
-              outPtr[key] = nestedDataOrResolver;
-            }
-          }
-        }
-
-        break;
-      }
-    }
-
-    // TODO: no longer sure what this is
-    if (typeof requestObj[fieldName] === 'object')
-      scheduleTask(async () => {
-        computed[fieldName] = await fastNocoV1(
-          requestObj[fieldName] as XcRequest,
-          computed[fieldName],
-        );
-      });
-  }
-
-  await flushTasks();
-  return computed;
-}
-
-// TODO: This is only to validate if this outputs right
 async function nocoExecuteNoDataTree(
   requestObj: any,
   resolverObj?: ResolverObj | ResolverObj[],
   rootArgs = null,
 ) {
-  if (Array.isArray(resolverObj))
-    return await Promise.all(
-      resolverObj.map((o, i) => nocoExecuteNoDataTree(requestObj, o)),
-    );
-
-  const out: any = {};
-  const resolveValue = (source: any, key: string, args: any) => {
-    if (!source || source[key] === undefined) return null;
-    return typeof source[key] === 'function' ? source[key](args) : source[key];
-  };
-
-  const resolvePath = async (
-    path: string[],
-    currentSource: any,
-    args: any,
-  ): Promise<any> => {
-    if (!path.length || !currentSource) return currentSource;
-
-    const [key, ...remainingPath] = path;
-    const value = await resolveValue(currentSource, key, args);
-
-    if (Array.isArray(value)) {
-      return Promise.all(
-        value.map((item) => resolvePath(remainingPath, item, args)),
+  return await timeit('nocoExecuteNoDataTree', async () => {
+    if (Array.isArray(resolverObj))
+      return await Promise.all(
+        resolverObj.map((o, i) => nocoExecuteNoDataTree(requestObj, o)),
       );
+
+    const out: any = {};
+    const resolveValue = (source: any, key: string, args: any) => {
+      if (!source || source[key] === undefined) return null;
+      return typeof source[key] === 'function'
+        ? source[key](args)
+        : source[key];
+    };
+
+    const resolvePath = async (
+      path: string[],
+      currentSource: any,
+      args: any,
+    ): Promise<any> => {
+      if (!path.length || !currentSource) return currentSource;
+
+      const [key, ...remainingPath] = path;
+      const value = await resolveValue(currentSource, key, args);
+
+      if (Array.isArray(value)) {
+        return Promise.all(
+          value.map((item) => resolvePath(remainingPath, item, args)),
+        );
+      }
+      return resolvePath(remainingPath, value, args);
+    };
+
+    const keys =
+      requestObj && typeof requestObj === 'object'
+        ? Object.keys(requestObj).filter((k) => requestObj[k])
+        : Object.keys(resolverObj || {});
+    for (const key of keys) {
+      let resolvedValue: any;
+      const alias = resolverObj?.__proto__?.__columnAliases?.[key];
+      const fieldArgs = rootArgs?.nested?.[key];
+
+      // 1. Resolve the raw value (either via Alias path or direct key)
+      if (alias?.path) {
+        const nestedResult = await resolvePath(
+          alias.path,
+          resolverObj,
+          fieldArgs,
+        );
+        resolvedValue = Array.isArray(nestedResult)
+          ? flattenArray(nestedResult)
+          : nestedResult;
+      } else {
+        resolvedValue = await resolveValue(resolverObj, key, fieldArgs);
+      }
+
+      // 2. Handle Recursion if the request object has nested requirements for this key
+      if (
+        requestObj[key] &&
+        typeof requestObj[key] === 'object' &&
+        resolvedValue
+      ) {
+        const nestedParams = {
+          nestedPage: rootArgs?.nestedPage,
+          limit: rootArgs?.nestedLimit,
+          ...(rootArgs?.nested?.[key] || {}),
+        };
+
+        resolvedValue = await nocoExecuteNoDataTree(
+          requestObj[key],
+          resolvedValue,
+          nestedParams,
+        );
+      }
+
+      out[key] = resolvedValue;
     }
-    return resolvePath(remainingPath, value, args);
-  };
 
-  const keys =
-    requestObj && typeof requestObj === 'object'
-      ? Object.keys(requestObj).filter((k) => requestObj[k])
-      : Object.keys(resolverObj || {});
-  for (const key of keys) {
-    let resolvedValue: any;
-    const alias = resolverObj?.__proto__?.__columnAliases?.[key];
-    const fieldArgs = rootArgs?.nested?.[key];
-
-    // 1. Resolve the raw value (either via Alias path or direct key)
-    if (alias?.path) {
-      const nestedResult = await resolvePath(
-        alias.path,
-        resolverObj,
-        fieldArgs,
-      );
-      resolvedValue = Array.isArray(nestedResult)
-        ? flattenArray(nestedResult)
-        : nestedResult;
-    } else {
-      resolvedValue = await resolveValue(resolverObj, key, fieldArgs);
-    }
-
-    // 2. Handle Recursion if the request object has nested requirements for this key
-    if (
-      requestObj[key] &&
-      typeof requestObj[key] === 'object' &&
-      resolvedValue
-    ) {
-      const nestedParams = {
-        nestedPage: rootArgs?.nestedPage,
-        limit: rootArgs?.nestedLimit,
-        ...(rootArgs?.nested?.[key] || {}),
-      };
-
-      resolvedValue = await nocoExecuteNoDataTree(
-        requestObj[key],
-        resolvedValue,
-        nestedParams,
-      );
-    }
-
-    out[key] = resolvedValue;
-  }
-
-  return out;
+    return out;
+  });
 }
 
 function isNil<T>(o: T): o is T & {} {

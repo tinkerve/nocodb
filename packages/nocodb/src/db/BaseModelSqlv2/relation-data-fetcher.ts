@@ -8,6 +8,7 @@ import { Filter, Model, View } from '~/models';
 import sortV2 from '~/db/sortV2';
 import conditionV2 from '~/db/conditionV2';
 import getAst from '~/helpers/getAst';
+import { Time, timeit } from 'src/utils';
 
 const GROUP_COL = '__nc_group_id';
 
@@ -340,95 +341,104 @@ export const relationDataFetcher = (param: {
       },
       args: { limit?; offset?; fieldSet?: Set<string> } = {},
     ) {
-      try {
-        const { where, sort, ...rest } = baseModel._getListArgs(args as any, {
-          apiVersion,
-          nested: true,
-        });
-        // todo: get only required fields
+      return timeit('hmList()', async () => {
+        try {
+          const { where, sort, ...rest } = baseModel._getListArgs(args as any, {
+            apiVersion,
+            nested: true,
+          });
+          // todo: get only required fields
 
-        const relColumn = (
-          await baseModel.model.getColumns(baseModel.context)
-        ).find((c) => c.id === colId);
-        const relationColOpts = (await relColumn.getColOptions(
-          baseModel.context,
-        )) as LinkToAnotherRecordColumn;
+          const relColumn = (
+            await baseModel.model.getColumns(baseModel.context)
+          ).find((c) => c.id === colId);
+          const relationColOpts = (await relColumn.getColOptions(
+            baseModel.context,
+          )) as LinkToAnotherRecordColumn;
 
-        const { refContext } = relationColOpts.getRelContext(baseModel.context);
+          const { refContext } = relationColOpts.getRelContext(
+            baseModel.context,
+          );
 
-        const childCol = await relationColOpts.getChildColumn(
-          baseModel.context,
-        );
+          const childCol = await relationColOpts.getChildColumn(
+            baseModel.context,
+          );
 
-        const childTable = await childCol.getModel(refContext);
+          const childTable = await childCol.getModel(refContext);
 
-        const parentCol = await relationColOpts.getParentColumn(
-          baseModel.context,
-        );
-        const parentTable = await parentCol.getModel(baseModel.context);
-        const childBaseModel = await Model.getBaseModelSQL(refContext, {
-          model: childTable,
-          dbDriver: baseModel.dbDriver,
-        });
-        await parentTable.getColumns(baseModel.context);
+          const parentCol = await relationColOpts.getParentColumn(
+            baseModel.context,
+          );
+          const parentTable = await parentCol.getModel(baseModel.context);
+          const childBaseModel = await Model.getBaseModelSQL(refContext, {
+            model: childTable,
+            dbDriver: baseModel.dbDriver,
+          });
+          await parentTable.getColumns(baseModel.context);
 
-        const childTn = childBaseModel.getTnPath(childTable);
-        const parentTn = baseModel.getTnPath(parentTable);
+          const childTn = childBaseModel.getTnPath(childTable);
+          const parentTn = baseModel.getTnPath(parentTable);
 
-        const qb = baseModel.dbDriver(childTn);
+          const qb = baseModel.dbDriver(childTn);
 
-        await childTable.getViews(childBaseModel.context);
-        const viewId =
-          relColumn.colOptions?.fk_target_view_id ?? childTable.views?.[0]?.id;
-        let view: View | null = null;
-        if (viewId) view = await View.get(childBaseModel.context, viewId);
+          await childTable.getViews(childBaseModel.context);
+          const viewId =
+            relColumn.colOptions?.fk_target_view_id ??
+            childTable.views?.[0]?.id;
+          let view: View | null = null;
+          if (viewId) view = await View.get(childBaseModel.context, viewId);
 
-        qb.whereIn(
-          childCol.column_name,
-          baseModel
-            .dbDriver(parentTn)
-            .select(parentCol.column_name)
-            // .where(parentTable.primaryKey.cn, p)
-            .where(_wherePk(parentTable.primaryKeys, id)),
-        );
-        // todo: sanitize
-        qb.limit(+rest?.limit || 25);
-        qb.offset(+rest?.offset || 0);
+          qb.whereIn(
+            childCol.column_name,
+            baseModel
+              .dbDriver(parentTn)
+              .select(parentCol.column_name)
+              // .where(parentTable.primaryKey.cn, p)
+              .where(_wherePk(parentTable.primaryKeys, id)),
+          );
+          // todo: sanitize
+          qb.limit(+rest?.limit || 25);
+          qb.offset(+rest?.offset || 0);
 
-        await childBaseModel.selectObject({
-          qb,
-          fieldsSet: args.fieldSet,
-          pkAndPvOnly: relationColOpts.isCrossBaseLink(),
-        });
+          await childBaseModel.selectObject({
+            qb,
+            fieldsSet: args.fieldSet,
+            pkAndPvOnly: relationColOpts.isCrossBaseLink(),
+          });
 
-        await childBaseModel.applySortAndFilter({
-          table: childTable,
-          where,
-          qb,
-          sort,
-          view,
-          skipViewFilter: true,
-        });
+          await childBaseModel.applySortAndFilter({
+            table: childTable,
+            where,
+            qb,
+            sort,
+            view,
+            skipViewFilter: true,
+          });
 
-        const children = await childBaseModel.execAndParse(
-          qb,
-          await childTable.getColumns(childBaseModel.context),
-        );
+          const children = await timeit(
+            'RelationDataFetcher.execAndParse',
+            async () =>
+              childBaseModel.execAndParse(
+                qb,
+                await childTable.getColumns(childBaseModel.context),
+              ),
+          );
 
-        const proto = await (
-          await Model.getBaseModelSQL(childBaseModel.context, {
-            id: childTable.id,
-            dbDriver: childBaseModel.dbDriver,
-          })
-        ).getProto();
+          const proto = await (
+            await Model.getBaseModelSQL(childBaseModel.context, {
+              id: childTable.id,
+              dbDriver: childBaseModel.dbDriver,
+            })
+          ).getProto();
 
-        return children.map((c) => {
-          c.__proto__ = proto;
-          return c;
-        });
-      } catch (e) {
-        throw e;
-      }
+          return children.map((c) => {
+            c.__proto__ = proto;
+            return c;
+          });
+        } catch (e) {
+          throw e;
+        }
+      });
     },
 
     async hmListCount({ colId, id }, args) {

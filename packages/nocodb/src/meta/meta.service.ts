@@ -13,6 +13,7 @@ import { XKnex } from '~/db/CustomKnex';
 import { NcConfig } from '~/utils/nc-config';
 import { MetaTable, RootScopes, RootScopeTables } from '~/utils/globals';
 import { NcError } from '~/helpers/catchError';
+import { Time, timeit } from 'src/utils';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -418,6 +419,7 @@ export class MetaService {
    * @param fields - Fields to be selected
    * @param xcCondition - Additional nested or complex condition to be added to the query.
    */
+  @Time()
   public async metaGet2(
     workspace_id: string,
     base_id: string,
@@ -472,7 +474,8 @@ export class MetaService {
     } else {
       query.where(idOrCondition);
     }
-    return query.first();
+
+    return timeit('query.first', async () => await query.first());
   }
 
   /***
@@ -506,6 +509,7 @@ export class MetaService {
    * @param args.orderBy - Order by fields
    * @returns {Promise<any[]>} - List of records
    * */
+  // @Time()
   public async metaList2(
     workspace_id: string,
     base_id: string,

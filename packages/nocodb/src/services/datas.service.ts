@@ -13,6 +13,7 @@ import { PagedResponseImpl } from '~/helpers/PagedResponse';
 import { Base, Column, Model, Source, View } from '~/models';
 import { nocoExecute, Time, timeit } from '~/utils';
 import NcConnectionMgrv2 from '~/utils/common/NcConnectionMgrv2';
+import { WithRequestScopedMemo } from 'src/helpers/requestScopedMemo';
 
 @Injectable()
 export class DatasService {
@@ -212,6 +213,7 @@ export class DatasService {
   }
 
   @Time()
+  @WithRequestScopedMemo()
   async getDataList(
     context: NcContext,
     param: {
@@ -254,21 +256,19 @@ export class DatasService {
         })),
     );
 
-    // Takes 0.3s (Consistent on any scale)
-    const { ast, dependencyFields } = await timeit(
-      'getAst',
-      async () =>
-        await getAst(context, {
-          model,
-          query,
-          view: view,
-          throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
-          getHiddenColumn: param.getHiddenColumns,
-          apiVersion,
-          includeSortAndFilterColumns: includeSortAndFilterColumns,
-        }),
-    );
+    // TODO: why is the ast fetching all the damn columns???
+    const { ast, dependencyFields } = await getAst(context, {
+      model,
+      query,
+      view: view,
+      throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
+      getHiddenColumn: param.getHiddenColumns,
+      apiVersion,
+      includeSortAndFilterColumns: includeSortAndFilterColumns,
+    });
+    // console.log('Used AST', ast, dependencyFields);
 
+    // TODO-NOTE: this seems to be used only for arguments in data loader? in data loader? in data loader? in data loader? in data loader? in data loader? in data loader? in data loader? in data loader?
     const listArgs: any = dependencyFields;
     try {
       listArgs.filterArr = JSON.parse(listArgs.filterArrJson);
@@ -282,35 +282,30 @@ export class DatasService {
     const [count, data] = await Promise.all([
       baseModel.count(listArgs, false, param.throwErrorIfInvalidParams),
       (async () => {
-        return timeit('fetchListFunc', async () => {
-          let data = [];
-          try {
-            // This takes 0.7s on 999s (but the qb itself takes 0.1s, meaning 0.6 is the rest of the logic)
-            // But I think this one is a constant too.
-            const model = await timeit('baseModel.list', () =>
-              baseModel.list(
-                { ...listArgs, apiVersion: param.apiVersion },
-                {
-                  ignoreViewFilterAndSort,
-                  throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
-                  ignorePagination: param.ignorePagination,
-                  limitOverride: param.limitOverride,
-                },
-              ),
-            );
-            data = await timeit('dataService.nocoExecute', async () =>
-              nocoExecute(ast, model, {}, listArgs),
-            );
-            // data = model;
-          } catch (e) {
-            if (e instanceof NcBaseError || e instanceof NcSDKErrorV2) throw e;
-            this.logger.error(e);
-            NcError.internalServerError(
-              'Please check server log for more details',
-            );
-          }
-          return data;
-        });
+        let data = [];
+        try {
+          data = await nocoExecute(
+            ast,
+            await baseModel.list(
+              { ...listArgs, apiVersion: param.apiVersion },
+              {
+                ignoreViewFilterAndSort,
+                throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
+                ignorePagination: param.ignorePagination,
+                limitOverride: param.limitOverride,
+              },
+            ),
+            {},
+            listArgs,
+          );
+        } catch (e) {
+          if (e instanceof NcBaseError || e instanceof NcSDKErrorV2) throw e;
+          this.logger.error(e);
+          NcError.internalServerError(
+            'Please check server log for more details',
+          );
+        }
+        return data;
       })(),
     ]);
     return new PagedResponseImpl(data, {

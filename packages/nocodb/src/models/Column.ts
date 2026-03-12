@@ -48,7 +48,8 @@ import {
   prepareForResponse,
 } from '~/utils/modelUtils';
 import { getFormulasReferredTheColumn } from '~/helpers/formulaHelpers';
-import { Time } from 'src/utils';
+import { Time, timeit } from 'src/utils';
+import { RequestScopedMemo } from 'src/helpers/requestScopedMemo';
 
 const selectColors = enumColors.light;
 
@@ -126,6 +127,7 @@ export default class Column<T = any> implements ColumnType {
     Object.assign(this, data);
   }
 
+  // @Time()
   public async getModel(
     context: NcContext,
     ncMeta = Noco.ncMeta,
@@ -543,6 +545,7 @@ export default class Column<T = any> implements ColumnType {
     }
   }
 
+  // @Time()
   public async getColOptions<U = T>(
     context: NcContext,
     ncMeta = Noco.ncMeta,
@@ -626,6 +629,7 @@ export default class Column<T = any> implements ColumnType {
     return this.model;
   }
 
+  @Time((c, p) => `${p.fk_model_id}`)
   public static async list(
     context: NcContext,
     {
@@ -637,9 +641,10 @@ export default class Column<T = any> implements ColumnType {
     },
     ncMeta = Noco.ncMeta,
   ): Promise<Column[]> {
-    const cachedList = await NocoCache.getList(CacheScope.COLUMN, [
-      fk_model_id,
-    ]);
+    const cachedList = await timeit('read cache', () =>
+      NocoCache.getList(CacheScope.COLUMN, [fk_model_id]),
+    );
+
     let { list: columnsList } = cachedList;
     const { isNoneList } = cachedList;
 
@@ -653,25 +658,31 @@ export default class Column<T = any> implements ColumnType {
     }, {});
 
     if (!isNoneList && !columnsList.length) {
-      columnsList = await ncMeta.metaList2(
-        context.workspace_id,
-        context.base_id,
-        MetaTable.COLUMNS,
-        {
-          condition: {
-            fk_model_id,
+      columnsList = await timeit('metaList', () =>
+        ncMeta.metaList2(
+          context.workspace_id,
+          context.base_id,
+          MetaTable.COLUMNS,
+          {
+            condition: {
+              fk_model_id,
+            },
+            orderBy: {
+              order: 'asc',
+            },
           },
-          orderBy: {
-            order: 'asc',
-          },
-        },
+        ),
       );
 
-      columnsList.forEach((column) => {
-        column.meta = parseMetaProp(column);
+      timeit('parseMetaProp', () => {
+        columnsList.forEach((column) => {
+          column.meta = parseMetaProp(column);
+        });
       });
 
-      await NocoCache.setList(CacheScope.COLUMN, [fk_model_id], columnsList);
+      await timeit('save to cache', () =>
+        NocoCache.setList(CacheScope.COLUMN, [fk_model_id], columnsList),
+      );
     }
 
     columnsList.sort(
@@ -680,20 +691,25 @@ export default class Column<T = any> implements ColumnType {
         (b.order != null ? b.order : Infinity),
     );
 
-    return Promise.all(
-      columnsList.map(async (m) => {
-        if (defaultViewColumns.length) {
-          m.meta = {
-            ...parseMetaProp(m),
-            defaultViewColOrder: defaultViewColumnMap[m.id]?.order,
-            defaultViewColVisibility: defaultViewColumnMap[m.id]?.show,
-          };
-        }
+    return timeit('last processing', () =>
+      Promise.all(
+        columnsList.map(async (m) => {
+          if (defaultViewColumns.length) {
+            m.meta = {
+              ...parseMetaProp(m),
+              defaultViewColOrder: defaultViewColumnMap[m.id]?.order,
+              defaultViewColVisibility: defaultViewColumnMap[m.id]?.show,
+            };
+          }
 
-        const column = new Column(m);
-        await column.getColOptions(context, ncMeta);
-        return column;
-      }),
+          const column = new Column(m);
+          await timeit(`getColOptions`, () =>
+            column.getColOptions(context, ncMeta),
+          );
+
+          return column;
+        }),
+      ),
     );
 
     /*const columns = ncMeta

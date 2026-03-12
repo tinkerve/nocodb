@@ -449,13 +449,11 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
       aliasColObjMap,
       throwErrorIfInvalidParams,
     );
-    const { filters: filterObj } = timeit('extractFilterFromXwhere', () =>
-      extractFilterFromXwhere(
-        this.context,
-        where,
-        aliasColObjMap,
-        throwErrorIfInvalidParams,
-      ),
+    const { filters: filterObj } = extractFilterFromXwhere(
+      this.context,
+      where,
+      aliasColObjMap,
+      throwErrorIfInvalidParams,
     );
     // todo: replace with view id
     if (!ignoreViewFilterAndSort && this.viewId) {
@@ -558,15 +556,13 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
 
     // if limitOverride is provided, use it as limit for the query (for internal usage eg. calendar, export)
-    timeit('applyPaginate', () => {
-      if (!ignorePagination) {
-        if (!limitOverride) {
-          applyPaginate(qb, rest);
-        } else {
-          applyPaginate(qb, { ...rest, limit: limitOverride });
-        }
+    if (!ignorePagination) {
+      if (!limitOverride) {
+        applyPaginate(qb, rest);
+      } else {
+        applyPaginate(qb, { ...rest, limit: limitOverride });
       }
-    });
+    }
     const proto = await timeit('getProto', () => this.getProto());
 
     let data;
@@ -1806,6 +1802,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return proto;
   }
 
+  @Time()
   _getListArgs(
     args: XcFilterWithAlias,
     {
@@ -2150,6 +2147,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return equal(pk1, pk2);
   }
 
+  // @Time()
   public getTnPath(tb: { table_name: string } | string, alias?: string) {
     const tn = typeof tb === 'string' ? tb : tb.table_name;
     if (this.isPg && this.schema) {
@@ -5160,6 +5158,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
+  @Time()
   public async execAndParse(
     qb: Knex.QueryBuilder | string,
     dependencyColumns?: Column[],
