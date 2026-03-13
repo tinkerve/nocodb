@@ -450,63 +450,62 @@ export class MetaService {
             typeof f === 'number',
         ));
 
-    const [original, batched] = await Promise.all([
-      this._metaGet2Single(
+    if (xcCondition || !isPlainFilter)
+      return this._metaGet2Single(
         workspace_id,
         base_id,
         target,
         idOrCondition,
         fields,
         xcCondition,
-      ),
-      this._metaLoader.load({
-        workspace_id,
-        project_id: base_id,
-        table_id: target,
-        plainFilter:
-          typeof idOrCondition === 'string'
-            ? { id: idOrCondition }
-            : idOrCondition,
-        fields,
-      }),
-    ]);
+      );
 
-    if (!deepEqual(original, batched)) {
-      console.log('DIFF(original vs batched)', original, batched);
-      console.log('PARAMS', {
-        workspace_id,
-        project_id: base_id,
-        table_id: target,
-        plainFilter:
-          typeof idOrCondition === 'string'
-            ? { id: idOrCondition }
-            : idOrCondition,
-        fields,
-      });
-    }
-
-    return batched;
-
-    // if (xcCondition || !isPlainFilter)
-    //   return this._metaGet2Single(
+    // const [original, batched] = await Promise.all([
+    //   this._metaGet2Single(
     //     workspace_id,
     //     base_id,
     //     target,
     //     idOrCondition,
     //     fields,
     //     xcCondition,
-    //   );
+    //   ),
+    //   this._metaLoader.load({
+    //     workspace_id,
+    //     project_id: base_id,
+    //     table_id: target,
+    //     plainFilter:
+    //       typeof idOrCondition === 'string'
+    //         ? { id: idOrCondition }
+    //         : idOrCondition,
+    //     fields,
+    //   }),
+    // ]);
 
-    // return this._metaLoader.load({
-    //   workspace_id,
-    //   project_id: base_id,
-    //   table_id: target,
-    //   plainFilter:
-    //     typeof idOrCondition === 'string'
-    //       ? { id: idOrCondition }
-    //       : idOrCondition,
-    //   fields,
-    // });
+    // if (!deepEqual(original, batched)) {
+    //   console.log('DIFF(original vs batched)', original, batched);
+    //   console.log('PARAMS', {
+    //     workspace_id,
+    //     project_id: base_id,
+    //     table_id: target,
+    //     plainFilter:
+    //       typeof idOrCondition === 'string'
+    //         ? { id: idOrCondition }
+    //         : idOrCondition,
+    //     fields,
+    //   });
+    // }
+    // return batched;
+
+    return this._metaLoader.load({
+      workspace_id,
+      project_id: base_id,
+      table_id: target,
+      plainFilter:
+        typeof idOrCondition === 'string'
+          ? { id: idOrCondition }
+          : idOrCondition,
+      fields,
+    });
   }
 
   private _groupBy<T, TKey extends PropertyKey = string>(
@@ -593,7 +592,13 @@ export class MetaService {
       );
 
       // HACK: the `then` is to force knex to fetch immediately
-      retrieved[queryKey] = query.then((x) => x);
+      const startTime = performance.now();
+      retrieved[queryKey] = query.then((x) => {
+        const endTime = performance.now();
+        const duration = (endTime - startTime) / 1000;
+        console.log(`Retrieved ${x.length} in ${duration.toFixed(3)}s`);
+        return x;
+      });
 
       // if (reqWithoutFilter.length > 0)
       // retrieved[queryKey + `:first`] = query
