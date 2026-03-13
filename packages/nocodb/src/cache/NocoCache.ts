@@ -42,7 +42,7 @@ export default class NocoCache {
     if (this.cacheDisabled) return Promise.resolve(true);
 
     if (ENABLE_REQUEST_CACHE && RequestScopedMemo.isEnabled()) {
-      RequestScopedMemo.set([`${this.prefix}:${key}`], value);
+      RequestScopedMemo.set(`${this.prefix}:${key}`, value);
       return this.client.set(`${this.prefix}:${key}`, value);
     }
 
@@ -72,7 +72,7 @@ export default class NocoCache {
 
     if (ENABLE_REQUEST_CACHE && RequestScopedMemo.isEnabled()) {
       // NOTE: I think this should return as it is and doesn't require casting
-      return RequestScopedMemo.use([`${this.prefix}:${key}`], () =>
+      return RequestScopedMemo.use(`${this.prefix}:${key}`, () =>
         this.client.get(`${this.prefix}:${key}`, type),
       );
     }
@@ -112,7 +112,7 @@ export default class NocoCache {
           ? `${this.prefix}:${scope}:list`
           : `${this.prefix}:${scope}:${subKeys.join(':')}:list`;
       // NOTE: I think this should return as it is and doesn't require casting
-      return RequestScopedMemo.use([listKey], () =>
+      return RequestScopedMemo.use(listKey, () =>
         this.client.getList(scope, subKeys, orderBy),
       );
     }
@@ -134,14 +134,14 @@ export default class NocoCache {
         subListKeys.length === 0
           ? `${this.prefix}:${scope}:list`
           : `${this.prefix}:${scope}:${subListKeys.join(':')}:list`;
-      RequestScopedMemo.set([listKey], { list, isNoneList: false });
+      RequestScopedMemo.set(listKey, { list, isNoneList: false });
 
       list.forEach(async (item) => {
         let itemKey =
           props.length > 0
             ? `${this.prefix}:${scope}:${props.map((p) => item[p]).join(':')}`
             : `${this.prefix}:${scope}:${item?.id}`;
-        RequestScopedMemo.set([itemKey], item);
+        RequestScopedMemo.set(itemKey, item);
         return itemKey;
       });
 

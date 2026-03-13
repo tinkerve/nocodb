@@ -11,7 +11,7 @@ import { getViewAndModelByAliasOrId } from '~/helpers/dataHelpers';
 import getAst from '~/helpers/getAst';
 import { PagedResponseImpl } from '~/helpers/PagedResponse';
 import { Base, Column, Model, Source, View } from '~/models';
-import { nocoExecute, Time, timeit } from '~/utils';
+import { traceConditional, nocoExecute, Time, timeit } from '~/utils';
 import NcConnectionMgrv2 from '~/utils/common/NcConnectionMgrv2';
 import { WithRequestScopedMemo } from 'src/helpers/requestScopedMemo';
 
@@ -279,39 +279,41 @@ export class DatasService {
 
     listArgs.customConditions = param.customConditions;
 
-    const [count, data] = await Promise.all([
-      baseModel.count(listArgs, false, param.throwErrorIfInvalidParams),
-      (async () => {
-        let data = [];
-        try {
-          data = await nocoExecute(
-            ast,
-            await baseModel.list(
-              { ...listArgs, apiVersion: param.apiVersion },
-              {
-                ignoreViewFilterAndSort,
-                throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
-                ignorePagination: param.ignorePagination,
-                limitOverride: param.limitOverride,
-              },
-            ),
-            {},
-            listArgs,
-          );
-        } catch (e) {
-          if (e instanceof NcBaseError || e instanceof NcSDKErrorV2) throw e;
-          this.logger.error(e);
-          NcError.internalServerError(
-            'Please check server log for more details',
-          );
-        }
-        return data;
-      })(),
-    ]);
-    return new PagedResponseImpl(data, {
-      ...query,
-      ...(param.limitOverride ? { limitOverride: param.limitOverride } : {}),
-      count,
+    return traceConditional(false, async () => {
+      const [count, data] = await Promise.all([
+        baseModel.count(listArgs, false, param.throwErrorIfInvalidParams),
+        (async () => {
+          let data = [];
+          try {
+            data = await nocoExecute(
+              ast,
+              await baseModel.list(
+                { ...listArgs, apiVersion: param.apiVersion },
+                {
+                  ignoreViewFilterAndSort,
+                  throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
+                  ignorePagination: param.ignorePagination,
+                  limitOverride: param.limitOverride,
+                },
+              ),
+              {},
+              listArgs,
+            );
+          } catch (e) {
+            if (e instanceof NcBaseError || e instanceof NcSDKErrorV2) throw e;
+            this.logger.error(e);
+            NcError.internalServerError(
+              'Please check server log for more details',
+            );
+          }
+          return data;
+        })(),
+      ]);
+      return new PagedResponseImpl(data, {
+        ...query,
+        ...(param.limitOverride ? { limitOverride: param.limitOverride } : {}),
+        count,
+      });
     });
   }
 

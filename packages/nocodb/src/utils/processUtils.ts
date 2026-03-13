@@ -40,11 +40,16 @@ interface TraceNode {
   root: TraceNode | null;
 }
 const traceContextStore = new AsyncLocalStorage<TraceNode>();
+const shouldTraceStore = new AsyncLocalStorage<boolean>();
 
 export function timeit<TReturn>(
   label: string,
   fn: (() => TReturn) | TReturn | Promise<TReturn>,
 ): TReturn {
+  const shouldTrace = shouldTraceStore.getStore() ?? true;
+  if (!shouldTrace)
+    return typeof fn === 'function' ? (fn as Function)() : (fn as any);
+
   const INDENT = '  ';
   const MERGE_TOLERANCE = 0.2;
   const TABULATION_DISTANCE = 80;
@@ -309,6 +314,10 @@ export function timeit<TReturn>(
       return result;
     }
   });
+}
+
+export function traceConditional<T>(shouldTrace: boolean, fn: () => T) {
+  return shouldTraceStore.run(shouldTrace, fn);
 }
 
 export function Time(logArgs?: (...args: any[]) => string): MethodDecorator {

@@ -640,9 +640,9 @@ export default class Column<T = any> implements ColumnType {
     },
     ncMeta = Noco.ncMeta,
   ): Promise<Column[]> {
-    const cachedList = await timeit('read cache', () =>
-      NocoCache.getList(CacheScope.COLUMN, [fk_model_id]),
-    );
+    const cachedList = await NocoCache.getList(CacheScope.COLUMN, [
+      fk_model_id,
+    ]);
 
     let { list: columnsList } = cachedList;
     const { isNoneList } = cachedList;
@@ -657,31 +657,25 @@ export default class Column<T = any> implements ColumnType {
     }, {});
 
     if (!isNoneList && !columnsList.length) {
-      columnsList = await timeit('metaList', () =>
-        ncMeta.metaList2(
-          context.workspace_id,
-          context.base_id,
-          MetaTable.COLUMNS,
-          {
-            condition: {
-              fk_model_id,
-            },
-            orderBy: {
-              order: 'asc',
-            },
+      columnsList = await ncMeta.metaList2(
+        context.workspace_id,
+        context.base_id,
+        MetaTable.COLUMNS,
+        {
+          condition: {
+            fk_model_id,
           },
-        ),
+          orderBy: {
+            order: 'asc',
+          },
+        },
       );
 
-      timeit('parseMetaProp', () => {
-        columnsList.forEach((column) => {
-          column.meta = parseMetaProp(column);
-        });
+      columnsList.forEach((column) => {
+        column.meta = parseMetaProp(column);
       });
 
-      await timeit('save to cache', () =>
-        NocoCache.setList(CacheScope.COLUMN, [fk_model_id], columnsList),
-      );
+      await NocoCache.setList(CacheScope.COLUMN, [fk_model_id], columnsList);
     }
 
     columnsList.sort(
@@ -690,9 +684,9 @@ export default class Column<T = any> implements ColumnType {
         (b.order != null ? b.order : Infinity),
     );
 
-    return await timeit('last processing', () =>
-      Promise.all(
-        columnsList.map(async (m) => {
+    return Promise.all(
+      columnsList.map(async (m) => {
+        return timeit(`columnOptions(${m.id})`, async () => {
           if (defaultViewColumns.length) {
             m.meta = {
               ...parseMetaProp(m),
@@ -705,8 +699,8 @@ export default class Column<T = any> implements ColumnType {
           await column.getColOptions(context, ncMeta);
 
           return column;
-        }),
-      ),
+        });
+      }),
     );
 
     /*const columns = ncMeta

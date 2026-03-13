@@ -451,7 +451,7 @@ export class MetaService {
 
     if (xcCondition || !isPlainFilter) {
       logflow('Cannot be batched');
-      return this._metaGet2Single(
+      return await this._metaGet2Single(
         workspace_id,
         base_id,
         target,
@@ -498,7 +498,7 @@ export class MetaService {
     // return batched;
 
     logflow('Batched');
-    const result = await this._metaLoader.load({
+    return await this._metaLoader.load({
       workspace_id,
       project_id: base_id,
       table_id: target,
@@ -508,20 +508,6 @@ export class MetaService {
           : idOrCondition,
       fields,
     });
-
-    // console.log('PARAMS', {
-    //   workspace_id,
-    //   project_id: base_id,
-    //   table_id: target,
-    //   plainFilter:
-    //     typeof idOrCondition === 'string'
-    //       ? { id: idOrCondition }
-    //       : idOrCondition,
-    //   fields,
-    // });
-    // console.log('RESULT', result);
-
-    return result;
   }
 
   private _groupBy<T, TKey extends PropertyKey = string>(

@@ -12,12 +12,7 @@ const isEqual = (a: any, b: any) => {
  * within the same request processing window to minimize latency. In the original context, it is to minimize
  * calls to NocoDB given the same table and view. (since nocodb is slow)
  */
-interface MemoNode {
-  key: any;
-  value: any | null;
-  next: MemoNode[];
-}
-const memoStorage = new AsyncLocalStorage<MemoNode>();
+const memoStorage = new AsyncLocalStorage<Record<string, any>>();
 const ROOT = Symbol('memo-root');
 const NOT_FOUND = Symbol('memo-not-found');
 
@@ -29,14 +24,7 @@ const logger = LOG_ENABLED
 
 export class RequestScopedMemo {
   static create(next: () => any) {
-    return memoStorage.run(
-      {
-        key: ROOT,
-        value: null,
-        next: [],
-      },
-      () => next(),
-    );
+    return memoStorage.run({}, () => next());
   }
 
   static isEnabled() {
@@ -44,7 +32,7 @@ export class RequestScopedMemo {
     return store !== undefined;
   }
 
-  static use<T>(key: any[], value: () => T) {
+  static use<T>(key: string, value: () => T) {
     if (!RequestScopedMemo.isEnabled()) return value();
 
     const stored = RequestScopedMemo.get(key);
@@ -60,47 +48,15 @@ export class RequestScopedMemo {
     }
   }
 
-  static get(key: any[]) {
+  static get(key: string) {
     const store = memoStorage.getStore();
     if (!store) return NOT_FOUND;
-
-    // Walk to the three to find the node
-    let current = store;
-    for (const k of key) {
-      // NOTE: not the most efficient but it'll work for now...
-      const nextNode = current.next.find((n) => isEqual(k, n.key));
-      if (!nextNode) {
-        logger.debug(`Not found in cache for ${key}`);
-        return NOT_FOUND;
-      }
-      current = nextNode;
-    }
-
-    logger.debug(`Cache hit ${key} ${current.value}`);
-    return current.value;
+    return store[key] ?? NOT_FOUND;
   }
-  static set<T>(key: any[], value: T) {
+  static set<T>(key: string, value: T) {
     const store = memoStorage.getStore();
     if (!store) return value;
-
-    // Recursively create node
-    let current = store;
-    for (const k of key) {
-      // NOTE: not the most efficient but it'll work for now...
-      const nextNode = current.next.find((n) => isEqual(k, n.key));
-      if (!nextNode) {
-        const next: MemoNode = {
-          key: k,
-          value: null,
-          next: [],
-        };
-        current.next.push(next);
-        current = next;
-      } else current = nextNode;
-    }
-
-    logger.debug(`Memoised ${key} ${value}`);
-    current.value = value;
+    store[key] = value;
     return value;
   }
 }
@@ -111,19 +67,6 @@ export function WithRequestScopedMemo(): MethodDecorator {
     const originalFn = (descriptor.value as AnyFn) ?? (() => {});
     descriptor.value = function (this: any, ...args: any[]) {
       return RequestScopedMemo.create(() => originalFn.apply(this, args));
-    } as any;
-  };
-}
-
-export function Memoable(): MethodDecorator {
-  return (target, property, descriptor) => {
-    const originalFn = (descriptor.value as AnyFn) ?? (() => {});
-    descriptor.value = function (this: any, ...args: any[]) {
-      const methodKey = (target as AnyFn)?.name ?? target.constructor.name;
-      const cacheKey = [methodKey, ...args];
-      return RequestScopedMemo.use(cacheKey, () =>
-        originalFn.apply(this, args),
-      );
     } as any;
   };
 }

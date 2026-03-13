@@ -3,6 +3,7 @@ import type { NcContext } from '~/interface/config';
 import { Column } from '~/models/';
 import LinkToAnotherRecordColumn from '~/models/LinkToAnotherRecordColumn';
 import Noco from '~/Noco';
+import { Time } from 'src/utils';
 
 export default class LinksColumn
   extends LinkToAnotherRecordColumn
@@ -39,6 +40,7 @@ export default class LinksColumn
     );
   }
 
+  @Time()
   public static async read(
     context: NcContext,
     columnId: string,

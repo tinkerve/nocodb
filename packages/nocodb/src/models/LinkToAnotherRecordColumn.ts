@@ -202,7 +202,7 @@ export default class LinkToAnotherRecordColumn {
     return await View.get(context, viewId, ncMeta);
   }
 
-  // @Time()
+  @Time()
   public static async read(
     context: NcContext,
     columnId: string,
