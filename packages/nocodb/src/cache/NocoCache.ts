@@ -42,8 +42,9 @@ export default class NocoCache {
     if (this.cacheDisabled) return Promise.resolve(true);
 
     if (ENABLE_REQUEST_CACHE && RequestScopedMemo.isEnabled()) {
+      void this.client.set(`${this.prefix}:${key}`, value);
       RequestScopedMemo.set(`${this.prefix}:${key}`, value);
-      return this.client.set(`${this.prefix}:${key}`, value);
+      return true;
     }
 
     return this.client.set(`${this.prefix}:${key}`, value);
