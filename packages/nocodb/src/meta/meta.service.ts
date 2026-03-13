@@ -450,26 +450,63 @@ export class MetaService {
             typeof f === 'number',
         ));
 
-    if (xcCondition || !isPlainFilter)
-      return this._metaGet2Single(
+    const [original, batched] = await Promise.all([
+      this._metaGet2Single(
         workspace_id,
         base_id,
         target,
         idOrCondition,
         fields,
         xcCondition,
-      );
+      ),
+      this._metaLoader.load({
+        workspace_id,
+        project_id: base_id,
+        table_id: target,
+        plainFilter:
+          typeof idOrCondition === 'string'
+            ? { id: idOrCondition }
+            : idOrCondition,
+        fields,
+      }),
+    ]);
 
-    return this._metaLoader.load({
-      workspace_id,
-      project_id: base_id,
-      table_id: target,
-      plainFilter:
-        typeof idOrCondition === 'string'
-          ? { id: idOrCondition }
-          : idOrCondition,
-      fields,
-    });
+    if (!deepEqual(original, batched)) {
+      console.log('DIFF(original vs batched)', original, batched);
+      console.log('PARAMS', {
+        workspace_id,
+        project_id: base_id,
+        table_id: target,
+        plainFilter:
+          typeof idOrCondition === 'string'
+            ? { id: idOrCondition }
+            : idOrCondition,
+        fields,
+      });
+    }
+
+    return batched;
+
+    // if (xcCondition || !isPlainFilter)
+    //   return this._metaGet2Single(
+    //     workspace_id,
+    //     base_id,
+    //     target,
+    //     idOrCondition,
+    //     fields,
+    //     xcCondition,
+    //   );
+
+    // return this._metaLoader.load({
+    //   workspace_id,
+    //   project_id: base_id,
+    //   table_id: target,
+    //   plainFilter:
+    //     typeof idOrCondition === 'string'
+    //       ? { id: idOrCondition }
+    //       : idOrCondition,
+    //   fields,
+    // });
   }
 
   private _groupBy<T, TKey extends PropertyKey = string>(
@@ -556,12 +593,7 @@ export class MetaService {
       );
 
       // HACK: the `then` is to force knex to fetch immediately
-
-      if (true)
-        retrieved[queryKey] = query
-          .clone()
-          .limit(1)
-          .then((x) => x);
+      retrieved[queryKey] = query.then((x) => x);
 
       // if (reqWithoutFilter.length > 0)
       // retrieved[queryKey + `:first`] = query
