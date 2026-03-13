@@ -605,7 +605,6 @@ export default class Column<T = any> implements ColumnType {
       //   res = await DbColumn.read(this.id);
       //   break;
     }
-    this.colOptions = res;
     return res;
   }
 
@@ -629,7 +628,7 @@ export default class Column<T = any> implements ColumnType {
     return this.model;
   }
 
-  @Time((c, p) => `${p.fk_model_id}`)
+  @Time((_, p) => `${p.fk_model_id}`)
   public static async list(
     context: NcContext,
     {
@@ -691,7 +690,7 @@ export default class Column<T = any> implements ColumnType {
         (b.order != null ? b.order : Infinity),
     );
 
-    return timeit('last processing', () =>
+    return await timeit('last processing', () =>
       Promise.all(
         columnsList.map(async (m) => {
           if (defaultViewColumns.length) {
@@ -703,9 +702,7 @@ export default class Column<T = any> implements ColumnType {
           }
 
           const column = new Column(m);
-          await timeit(`getColOptions`, () =>
-            column.getColOptions(context, ncMeta),
-          );
+          await column.getColOptions(context, ncMeta);
 
           return column;
         }),

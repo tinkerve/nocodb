@@ -202,7 +202,7 @@ export default class LinkToAnotherRecordColumn {
     return await View.get(context, viewId, ncMeta);
   }
 
-  @Time()
+  // @Time()
   public static async read(
     context: NcContext,
     columnId: string,
@@ -210,12 +210,18 @@ export default class LinkToAnotherRecordColumn {
   ) {
     let colData =
       columnId &&
-      (await timeit('get from cache', () =>
-        NocoCache.get(
-          `${CacheScope.COL_RELATION}:${columnId}`,
-          CacheGetType.TYPE_OBJECT,
-        ),
+      (await NocoCache.get(
+        `${CacheScope.COL_RELATION}:${columnId}`,
+        CacheGetType.TYPE_OBJECT,
       ));
+    // let colData =
+    //   columnId &&
+    //   (await timeit('get from cache', () =>
+    //     NocoCache.get(
+    //       `${CacheScope.COL_RELATION}:${columnId}`,
+    //       CacheGetType.TYPE_OBJECT,
+    //     ),
+    //   ));
     if (!colData) {
       colData = await timeit('get meta', () =>
         ncMeta.metaGet2(

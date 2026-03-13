@@ -22,6 +22,7 @@ export function handleUncaughtErrors(process: NodeJS.Process) {
 
 const logger = new Logger('TIMEIT');
 // const logger = { debug: console.log };
+// const logger = { debug: (...args: any[]) => {} };
 
 //  TODO: refactor this so it trails properly to the parent (by like previous callee or something like that)
 //  This basically should model the execution tree (and so we can log it more nicely)

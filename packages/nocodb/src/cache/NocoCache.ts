@@ -6,7 +6,7 @@ import { getRedisURL } from '~/helpers/redisHelpers';
 import { logflow, Time } from 'src/utils';
 import { RequestScopedMemo } from 'src/helpers/requestScopedMemo';
 
-const ENABLE_REQUEST_CACHE = false;
+const ENABLE_REQUEST_CACHE = true;
 
 export default class NocoCache {
   private static client: CacheMgr;
@@ -42,9 +42,8 @@ export default class NocoCache {
     if (this.cacheDisabled) return Promise.resolve(true);
 
     if (ENABLE_REQUEST_CACHE && RequestScopedMemo.isEnabled()) {
-      void this.client.set(`${this.prefix}:${key}`, value);
       RequestScopedMemo.set([`${this.prefix}:${key}`], value);
-      return true;
+      return this.client.set(`${this.prefix}:${key}`, value);
     }
 
     return this.client.set(`${this.prefix}:${key}`, value);
@@ -108,8 +107,12 @@ export default class NocoCache {
       });
 
     if (ENABLE_REQUEST_CACHE && RequestScopedMemo.isEnabled()) {
+      const listKey =
+        subKeys.length === 0
+          ? `${this.prefix}:${scope}:list`
+          : `${this.prefix}:${scope}:${subKeys.join(':')}:list`;
       // NOTE: I think this should return as it is and doesn't require casting
-      return RequestScopedMemo.use([scope, subKeys.join('')], () =>
+      return RequestScopedMemo.use([listKey], () =>
         this.client.getList(scope, subKeys, orderBy),
       );
     }
@@ -127,25 +130,23 @@ export default class NocoCache {
     if (this.cacheDisabled) return Promise.resolve(true);
 
     if (ENABLE_REQUEST_CACHE && RequestScopedMemo.isEnabled()) {
-      // TODO: what the fuck? this function definitely makes it faster/slower
-      void this.client.setList(scope, subListKeys, list, props);
-
       const listKey =
         subListKeys.length === 0
           ? `${this.prefix}:${scope}:list`
           : `${this.prefix}:${scope}:${subListKeys.join(':')}:list`;
-      this.set(listKey, {
-        list,
-        isNoneList: false,
-      });
-      for (const item of list) {
+      RequestScopedMemo.set([listKey], { list, isNoneList: false });
+
+      list.forEach(async (item) => {
         let itemKey =
           props.length > 0
             ? `${this.prefix}:${scope}:${props.map((p) => item[p]).join(':')}`
             : `${this.prefix}:${scope}:${item?.id}`;
-        this.set(itemKey, item);
-      }
+        RequestScopedMemo.set([itemKey], item);
+        return itemKey;
+      });
 
+      // TODO: what the fuck? this function definitely makes it faster/slower
+      void this.client.setList(scope, subListKeys, list, props);
       return true;
     }
 
