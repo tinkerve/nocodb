@@ -23,6 +23,7 @@ export function handleUncaughtErrors(process: NodeJS.Process) {
 const logger = new Logger('TIMEIT');
 // const logger = { debug: console.log };
 // const logger = { debug: (...args: any[]) => {} };
+const GLOBAL_SHOULD_TRACE = false;
 
 //  TODO: refactor this so it trails properly to the parent (by like previous callee or something like that)
 //  This basically should model the execution tree (and so we can log it more nicely)
@@ -47,7 +48,7 @@ export function timeit<TReturn>(
   fn: (() => TReturn) | TReturn | Promise<TReturn>,
 ): TReturn {
   const shouldTrace = shouldTraceStore.getStore() ?? true;
-  if (!shouldTrace)
+  if (!shouldTrace || !GLOBAL_SHOULD_TRACE)
     return typeof fn === 'function' ? (fn as Function)() : (fn as any);
 
   const INDENT = '  ';
