@@ -221,7 +221,6 @@ const appendWhereCondition = function (
               break;
             default:
               throw new Error(`${matches[1]} : Invalid operation.`);
-              break;
           }
           break;
         case 'is':
@@ -256,7 +255,6 @@ const appendWhereCondition = function (
               break;
             default:
               throw new Error(`${matches[1]} : Invalid operation.`);
-              break;
           }
           break;
         case 'isnot':
@@ -293,7 +291,6 @@ const appendWhereCondition = function (
               break;
             default:
               throw new Error(`${matches[1]} : Invalid operation.`);
-              break;
           }
           break;
         case 'btw':
@@ -350,7 +347,6 @@ const appendWhereCondition = function (
                 break;
               default:
                 throw new Error(`${matches[1]} : Invalid operation.`);
-                break;
             }
           }
           break;
@@ -412,7 +408,6 @@ const appendWhereCondition = function (
                     columnAliases[matches[2]] || matches[2]
                   } : Invalid operation.`,
                 );
-                break;
             }
           }
           break;
@@ -482,7 +477,6 @@ const appendWhereCondition = function (
               break;
             default:
               throw new Error(`${matches[1] || ''} Invalid operation.`);
-              break;
           }
           break;
       }
