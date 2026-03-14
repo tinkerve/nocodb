@@ -5,6 +5,14 @@ import Noco from '~/Noco';
 import { handleUncaughtErrors } from '~/utils';
 handleUncaughtErrors(process);
 
+// import inspector from 'inspector';
+// {
+//   // Open the inspector and potentially wait for a client to connect
+//   inspector.open(9229, '127.0.0.1', true);
+//   // The `true` argument to `open` will block execution until a client is connected.
+//   console.log('Debugger enabled and waiting for client on 127.0.0.1:9229');
+// }
+
 // ref: https://github.com/nodejs/node/issues/40702#issuecomment-1103623246
 dns.setDefaultResultOrder('ipv4first');
 

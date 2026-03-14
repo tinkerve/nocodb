@@ -1,8 +1,12 @@
 import RedisCacheMgr from './RedisCacheMgr';
 import RedisMockCacheMgr from './RedisMockCacheMgr';
 import type CacheMgr from './CacheMgr';
-import { CACHE_PREFIX, CacheGetType } from '~/utils/globals';
+import { CACHE_PREFIX, CacheGetType, CacheScope } from '~/utils/globals';
 import { getRedisURL } from '~/helpers/redisHelpers';
+import { logflow, Time } from 'src/utils';
+import { RequestScopedMemo } from 'src/helpers/requestScopedMemo';
+
+const ENABLE_REQUEST_CACHE = true;
 
 export default class NocoCache {
   private static client: CacheMgr;
@@ -36,6 +40,13 @@ export default class NocoCache {
 
   public static async set(key, value): Promise<boolean> {
     if (this.cacheDisabled) return Promise.resolve(true);
+
+    if (ENABLE_REQUEST_CACHE && RequestScopedMemo.isEnabled()) {
+      void this.client.set(`${this.prefix}:${key}`, value);
+      RequestScopedMemo.set(`${this.prefix}:${key}`, value);
+      return true;
+    }
+
     return this.client.set(`${this.prefix}:${key}`, value);
   }
 
@@ -59,6 +70,14 @@ export default class NocoCache {
       else if (type === CacheGetType.TYPE_OBJECT) return Promise.resolve(null);
       return Promise.resolve(null);
     }
+
+    if (ENABLE_REQUEST_CACHE && RequestScopedMemo.isEnabled()) {
+      // NOTE: I think this should return as it is and doesn't require casting
+      return RequestScopedMemo.use(`${this.prefix}:${key}`, () =>
+        this.client.get(`${this.prefix}:${key}`, type),
+      );
+    }
+
     return this.client.get(`${this.prefix}:${key}`, type);
   }
 
@@ -69,6 +88,7 @@ export default class NocoCache {
     return this.client.del(`${this.prefix}:${key}`);
   }
 
+  // @Time()
   public static async getList(
     scope: string,
     subKeys: string[],
@@ -86,9 +106,22 @@ export default class NocoCache {
         list: [],
         isNoneList: false,
       });
+
+    if (ENABLE_REQUEST_CACHE && RequestScopedMemo.isEnabled()) {
+      const listKey =
+        subKeys.length === 0
+          ? `${this.prefix}:${scope}:list`
+          : `${this.prefix}:${scope}:${subKeys.join(':')}:list`;
+      // NOTE: I think this should return as it is and doesn't require casting
+      return RequestScopedMemo.use(listKey, () =>
+        this.client.getList(scope, subKeys, orderBy),
+      );
+    }
+
     return this.client.getList(scope, subKeys, orderBy);
   }
 
+  // @Time()
   public static async setList(
     scope: string,
     subListKeys: string[],
@@ -96,6 +129,28 @@ export default class NocoCache {
     props: string[] = [],
   ): Promise<boolean> {
     if (this.cacheDisabled) return Promise.resolve(true);
+
+    if (ENABLE_REQUEST_CACHE && RequestScopedMemo.isEnabled()) {
+      const listKey =
+        subListKeys.length === 0
+          ? `${this.prefix}:${scope}:list`
+          : `${this.prefix}:${scope}:${subListKeys.join(':')}:list`;
+      RequestScopedMemo.set(listKey, { list, isNoneList: false });
+
+      list.forEach(async (item) => {
+        let itemKey =
+          props.length > 0
+            ? `${this.prefix}:${scope}:${props.map((p) => item[p]).join(':')}`
+            : `${this.prefix}:${scope}:${item?.id}`;
+        RequestScopedMemo.set(itemKey, item);
+        return itemKey;
+      });
+
+      // TODO: what the fuck? this function definitely makes it faster/slower
+      void this.client.setList(scope, subListKeys, list, props);
+      return true;
+    }
+
     return this.client.setList(scope, subListKeys, list, props);
   }
 

@@ -75,6 +75,7 @@ module.exports = {
     '@typescript-eslint/no-this-alias': 'off',
 
     // todo: enable
+    'prettier/prettier': [{ endOfLine: 'auto' }],
     '@typescript-eslint/ban-ts-comment': 'off',
     '@typescript-eslint/no-explicit-any': 'off',
     '@typescript-eslint/no-var-requires': 'off',

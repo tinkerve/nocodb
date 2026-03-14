@@ -119,6 +119,8 @@ import {
   populateUpdatePayloadDiff,
   remapWithAlias,
   removeBlankPropsAndMask,
+  Time,
+  timeit,
 } from '~/utils';
 import { MetaTable } from '~/utils/globals';
 import { chunkArray } from '~/utils/tsUtils';
@@ -319,6 +321,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // todo: add support for sortArrJson
+  @Time()
   public async findOne(
     args: {
       where?: string;
@@ -388,6 +391,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return data;
   }
 
+  @Time()
   public async list(
     args: {
       where?: string;
@@ -559,13 +563,15 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
         applyPaginate(qb, { ...rest, limit: limitOverride });
       }
     }
-    const proto = await this.getProto();
+    const proto = await timeit('getProto', () => this.getProto());
 
     let data;
     try {
-      data = await this.execAndParse(qb, undefined, {
-        apiVersion: args.apiVersion,
-      });
+      data = await timeit('qb.exec', () =>
+        this.execAndParse(qb, undefined, {
+          apiVersion: args.apiVersion,
+        }),
+      );
     } catch (e) {
       if (validateFormula || !haveFormulaColumn(columns)) throw e;
       logger.log(e);
@@ -1131,6 +1137,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
   }
 
   // #region relation list count part 1
+  @Time()
   async multipleHmList(
     param: {
       colId: string;
@@ -1146,6 +1153,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
+  @Time()
   public async mmList(
     param: {
       colId: string;
@@ -1163,6 +1171,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     );
   }
 
+  @Time()
   async multipleHmListCount({ colId, ids }) {
     return relationDataFetcher({
       baseModel: this,
@@ -1173,6 +1182,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     });
   }
 
+  @Time()
   async hmList(
     param: {
       colId: string;
@@ -1185,6 +1195,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return relationDataFetcher({ baseModel: this, logger }).hmList(param, args);
   }
 
+  @Time()
   async hmListCount({ colId, id }, args) {
     return relationDataFetcher({ baseModel: this, logger }).hmListCount(
       { colId, id },
@@ -1460,31 +1471,33 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               if (colOptions?.type === 'hm') {
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
-                    if (ids.length > 1) {
-                      const data = await this.multipleHmList(
-                        {
-                          colId: column.id,
-                          ids,
-                          apiVersion,
-                        },
-                        (listLoader as any).args,
-                      );
-                      return ids.map((id: string) =>
-                        data[id] ? data[id] : [],
-                      );
-                    } else {
-                      return [
-                        await this.hmList(
+                    return timeit('hmListLoader', async () => {
+                      if (ids.length > 1) {
+                        const data = await this.multipleHmList(
                           {
                             colId: column.id,
-                            id: ids[0],
+                            ids,
                             apiVersion,
-                            nested: true,
                           },
                           (listLoader as any).args,
-                        ),
-                      ];
-                    }
+                        );
+                        return ids.map((id: string) =>
+                          data[id] ? data[id] : [],
+                        );
+                      } else {
+                        return [
+                          await this.hmList(
+                            {
+                              colId: column.id,
+                              id: ids[0],
+                              apiVersion,
+                              nested: true,
+                            },
+                            (listLoader as any).args,
+                          ),
+                        ];
+                      }
+                    });
                   },
                   {
                     cache: false,
@@ -1505,31 +1518,33 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
               } else if (colOptions.type === 'mm') {
                 const listLoader = new DataLoader(
                   async (ids: string[]) => {
-                    if (ids?.length > 1) {
-                      const data = await this.multipleMmList(
-                        {
-                          parentIds: ids,
-                          colId: column.id,
-                          apiVersion,
-                          nested: true,
-                        },
-                        (listLoader as any).args,
-                      );
-
-                      return data;
-                    } else {
-                      return [
-                        await this.mmList(
+                    return timeit('mmListLoader', async () => {
+                      if (ids?.length > 1) {
+                        const data = await this.multipleMmList(
                           {
-                            parentId: ids[0],
+                            parentIds: ids,
                             colId: column.id,
                             apiVersion,
                             nested: true,
                           },
                           (listLoader as any).args,
-                        ),
-                      ];
-                    }
+                        );
+
+                        return data;
+                      } else {
+                        return [
+                          await this.mmList(
+                            {
+                              parentId: ids[0],
+                              colId: column.id,
+                              apiVersion,
+                              nested: true,
+                            },
+                            (listLoader as any).args,
+                          ),
+                        ];
+                      }
+                    });
                   },
                   {
                     cache: false,
@@ -1566,97 +1581,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                 // this way all parents data extracted together
                 const readLoader = new DataLoader(
                   async (_ids: string[]) => {
-                    // handle binary(16) foreign keys
-                    const ids = _ids.map((id) => {
-                      if (pCol.ct !== 'binary(16)') return id;
-
-                      // Cast the id to string.
-                      const idAsString = id + '';
-                      // Check if the id is a UUID and the column is binary(16)
-                      const isUUIDBinary16 =
-                        idAsString.length === 36 || idAsString.length === 32;
-                      // If the id is a UUID and the column is binary(16), convert the id to a Buffer. Otherwise, return null to indicate that the id is not a UUID.
-                      const idAsUUID = isUUIDBinary16
-                        ? idAsString.length === 32
-                          ? idAsString.replace(
-                              /(.{8})(.{4})(.{4})(.{4})(.{12})/,
-                              '$1-$2-$3-$4-$5',
-                            )
-                          : idAsString
-                        : null;
-
-                      return idAsUUID
-                        ? Buffer.from(idAsUUID.replace(/-/g, ''), 'hex')
-                        : id;
-                    });
-
-                    const data = await (
-                      await Model.getBaseModelSQL(refContext, {
-                        id: pCol.fk_model_id,
-                        dbDriver: this.dbDriver,
-                      })
-                    ).list(
-                      {
-                        fieldsSet: (readLoader as any).args?.fieldsSet,
-                        filterArr: [
-                          new Filter({
-                            id: null,
-                            fk_column_id: pCol.id,
-                            fk_model_id: pCol.fk_model_id,
-                            value: ids as any[],
-                            comparison_op: 'in',
-                          }),
-                        ],
-                      },
-                      {
-                        ignoreViewFilterAndSort: true,
-                        ignorePagination: true,
-                      },
-                    );
-
-                    const groupedList = groupBy(data, pCol.title);
-                    return _ids.map(
-                      async (id: string) => groupedList?.[id]?.[0],
-                    );
-                  },
-                  {
-                    cache: false,
-                  },
-                );
-
-                // defining BelongsTo read resolver method
-                proto[column.title] = async function (args?: any) {
-                  if (
-                    this?.[cCol?.title] === null ||
-                    this?.[cCol?.title] === undefined
-                  )
-                    return null;
-
-                  (readLoader as any).args = args;
-
-                  return await readLoader.load(this?.[cCol?.title]);
-                };
-              } else if (colOptions.type === 'oo') {
-                const isBt = column.meta?.bt;
-
-                if (isBt) {
-                  // @ts-ignore
-                  const colOptions = (await column.getColOptions(
-                    this.context,
-                  )) as LinkToAnotherRecordColumn;
-                  const pCol = await Column.get(refContext, {
-                    colId: colOptions.fk_parent_column_id,
-                  });
-                  const cCol = await Column.get(this.context, {
-                    colId: colOptions.fk_child_column_id,
-                  });
-
-                  // use dataloader to get batches of parent data together rather than getting them individually
-                  // it takes individual keys and callback is invoked with an array of values and we can get the
-                  // result for all those together and return the value in the same order as in the array
-                  // this way all parents data extracted together
-                  const readLoader = new DataLoader(
-                    async (_ids: string[]) => {
+                    return timeit('btReadLoader', async () => {
                       // handle binary(16) foreign keys
                       const ids = _ids.map((id) => {
                         if (pCol.ct !== 'binary(16)') return id;
@@ -1709,6 +1634,101 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
                       return _ids.map(
                         async (id: string) => groupedList?.[id]?.[0],
                       );
+                    });
+                  },
+                  {
+                    cache: false,
+                  },
+                );
+
+                // defining BelongsTo read resolver method
+                proto[column.title] = async function (args?: any) {
+                  if (
+                    this?.[cCol?.title] === null ||
+                    this?.[cCol?.title] === undefined
+                  )
+                    return null;
+
+                  (readLoader as any).args = args;
+
+                  return await readLoader.load(this?.[cCol?.title]);
+                };
+              } else if (colOptions.type === 'oo') {
+                const isBt = column.meta?.bt;
+
+                if (isBt) {
+                  // @ts-ignore
+                  const colOptions = (await column.getColOptions(
+                    this.context,
+                  )) as LinkToAnotherRecordColumn;
+                  const pCol = await Column.get(refContext, {
+                    colId: colOptions.fk_parent_column_id,
+                  });
+                  const cCol = await Column.get(this.context, {
+                    colId: colOptions.fk_child_column_id,
+                  });
+
+                  // use dataloader to get batches of parent data together rather than getting them individually
+                  // it takes individual keys and callback is invoked with an array of values and we can get the
+                  // result for all those together and return the value in the same order as in the array
+                  // this way all parents data extracted together
+                  const readLoader = new DataLoader(
+                    async (_ids: string[]) => {
+                      return timeit('ooBtLoader', async () => {
+                        // handle binary(16) foreign keys
+                        const ids = _ids.map((id) => {
+                          if (pCol.ct !== 'binary(16)') return id;
+
+                          // Cast the id to string.
+                          const idAsString = id + '';
+                          // Check if the id is a UUID and the column is binary(16)
+                          const isUUIDBinary16 =
+                            idAsString.length === 36 ||
+                            idAsString.length === 32;
+                          // If the id is a UUID and the column is binary(16), convert the id to a Buffer. Otherwise, return null to indicate that the id is not a UUID.
+                          const idAsUUID = isUUIDBinary16
+                            ? idAsString.length === 32
+                              ? idAsString.replace(
+                                  /(.{8})(.{4})(.{4})(.{4})(.{12})/,
+                                  '$1-$2-$3-$4-$5',
+                                )
+                              : idAsString
+                            : null;
+
+                          return idAsUUID
+                            ? Buffer.from(idAsUUID.replace(/-/g, ''), 'hex')
+                            : id;
+                        });
+
+                        const data = await (
+                          await Model.getBaseModelSQL(refContext, {
+                            id: pCol.fk_model_id,
+                            dbDriver: this.dbDriver,
+                          })
+                        ).list(
+                          {
+                            fieldsSet: (readLoader as any).args?.fieldsSet,
+                            filterArr: [
+                              new Filter({
+                                id: null,
+                                fk_column_id: pCol.id,
+                                fk_model_id: pCol.fk_model_id,
+                                value: ids as any[],
+                                comparison_op: 'in',
+                              }),
+                            ],
+                          },
+                          {
+                            ignoreViewFilterAndSort: true,
+                            ignorePagination: true,
+                          },
+                        );
+
+                        const groupedList = groupBy(data, pCol.title);
+                        return _ids.map(
+                          async (id: string) => groupedList?.[id]?.[0],
+                        );
+                      });
                     },
                     {
                       cache: false,
@@ -1782,6 +1802,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return proto;
   }
 
+  @Time()
   _getListArgs(
     args: XcFilterWithAlias,
     {
@@ -1807,6 +1828,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
+  @Time()
   public async selectObject(params: {
     fieldsSet?: Set<string>;
     qb: Knex.QueryBuilder & Knex.QueryInterface;
@@ -2125,6 +2147,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     return equal(pk1, pk2);
   }
 
+  // @Time()
   public getTnPath(tb: { table_name: string } | string, alias?: string) {
     const tn = typeof tb === 'string' ? tb : tb.table_name;
     if (this.isPg && this.schema) {
@@ -5135,6 +5158,7 @@ class BaseModelSqlv2 implements IBaseModelSqlV2 {
     }
   }
 
+  @Time()
   public async execAndParse(
     qb: Knex.QueryBuilder | string,
     dependencyColumns?: Column[],

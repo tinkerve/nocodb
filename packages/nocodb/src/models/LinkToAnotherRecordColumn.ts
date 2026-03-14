@@ -9,6 +9,7 @@ import NocoCache from '~/cache/NocoCache';
 import { extractProps } from '~/helpers/extractProps';
 import { CacheGetType, CacheScope, MetaTable } from '~/utils/globals';
 import { View } from '~/models/index';
+import { logflow, Time, timeit } from 'src/utils';
 
 export default class LinkToAnotherRecordColumn {
   protected _context: {
@@ -68,6 +69,7 @@ export default class LinkToAnotherRecordColumn {
     });
   }
 
+  // @Time()
   public async getChildColumn(
     context: NcContext,
     ncMeta = Noco.ncMeta,
@@ -97,6 +99,7 @@ export default class LinkToAnotherRecordColumn {
     ));
   }
 
+  // @Time()
   public async getParentColumn(
     context: NcContext,
     ncMeta = Noco.ncMeta,
@@ -199,6 +202,7 @@ export default class LinkToAnotherRecordColumn {
     return await View.get(context, viewId, ncMeta);
   }
 
+  @Time()
   public static async read(
     context: NcContext,
     columnId: string,
@@ -210,14 +214,26 @@ export default class LinkToAnotherRecordColumn {
         `${CacheScope.COL_RELATION}:${columnId}`,
         CacheGetType.TYPE_OBJECT,
       ));
+    // let colData =
+    //   columnId &&
+    //   (await timeit('get from cache', () =>
+    //     NocoCache.get(
+    //       `${CacheScope.COL_RELATION}:${columnId}`,
+    //       CacheGetType.TYPE_OBJECT,
+    //     ),
+    //   ));
     if (!colData) {
-      colData = await ncMeta.metaGet2(
-        context.workspace_id,
-        context.base_id,
-        MetaTable.COL_RELATIONS,
-        { fk_column_id: columnId },
+      colData = await timeit('get meta', () =>
+        ncMeta.metaGet2(
+          context.workspace_id,
+          context.base_id,
+          MetaTable.COL_RELATIONS,
+          { fk_column_id: columnId },
+        ),
       );
-      await NocoCache.set(`${CacheScope.COL_RELATION}:${columnId}`, colData);
+      await timeit('set to cache', () =>
+        NocoCache.set(`${CacheScope.COL_RELATION}:${columnId}`, colData),
+      );
     }
     return colData ? new LinkToAnotherRecordColumn(colData) : null;
   }
@@ -230,6 +246,7 @@ export default class LinkToAnotherRecordColumn {
     // placeholder method
   }
 
+  // @Time()
   getRelContext(context: NcContext) {
     if (this._context) {
       return this._context;

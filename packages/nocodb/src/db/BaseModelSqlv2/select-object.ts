@@ -65,7 +65,10 @@ export const selectObject = (baseModel: IBaseModelSqlV2, logger: Logger) => {
         _columns ||
         (await baseModel.model.getColumns(baseModel.context));
     }
-    for (const viewOrTableColumn of viewOrTableColumns) {
+    // TODO: so you're the fucking reason you piece of shit
+    const processColumn = async (
+      viewOrTableColumn: (typeof viewOrTableColumns)[0],
+    ) => {
       const column =
         viewOrTableColumn instanceof Column
           ? viewOrTableColumn
@@ -84,10 +87,10 @@ export const selectObject = (baseModel: IBaseModelSqlV2, logger: Logger) => {
           pkAndPvOnly,
         )
       ) {
-        continue;
+        return;
       }
 
-      if (!checkColumnRequired(column, fields, extractPkAndPv)) continue;
+      if (!checkColumnRequired(column, fields, extractPkAndPv)) return;
 
       switch (column.uidt) {
         case UITypes.CreatedTime:
@@ -174,7 +177,7 @@ export const selectObject = (baseModel: IBaseModelSqlV2, logger: Logger) => {
                   [column.column_name]: selectQb.builder,
                 });
               } catch {
-                continue;
+                return;
               }
               break;
             default: {
@@ -220,7 +223,7 @@ export const selectObject = (baseModel: IBaseModelSqlV2, logger: Logger) => {
                   [getAs(column)]: selectQb.builder,
                 });
               } catch {
-                continue;
+                return;
               }
               break;
             default: {
@@ -428,7 +431,13 @@ export const selectObject = (baseModel: IBaseModelSqlV2, logger: Logger) => {
           );
           break;
       }
-    }
+    };
+    await Promise.all(
+      viewOrTableColumns.map(async (viewOrTableColumn) =>
+        processColumn(viewOrTableColumn),
+      ),
+    );
+
     qb.select(res);
   };
 };

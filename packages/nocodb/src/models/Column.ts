@@ -48,6 +48,8 @@ import {
   prepareForResponse,
 } from '~/utils/modelUtils';
 import { getFormulasReferredTheColumn } from '~/helpers/formulaHelpers';
+import { Time, timeit } from 'src/utils';
+import { RequestScopedMemo } from 'src/helpers/requestScopedMemo';
 
 const selectColors = enumColors.light;
 
@@ -125,6 +127,7 @@ export default class Column<T = any> implements ColumnType {
     Object.assign(this, data);
   }
 
+  // @Time()
   public async getModel(
     context: NcContext,
     ncMeta = Noco.ncMeta,
@@ -542,6 +545,7 @@ export default class Column<T = any> implements ColumnType {
     }
   }
 
+  // @Time()
   public async getColOptions<U = T>(
     context: NcContext,
     ncMeta = Noco.ncMeta,
@@ -601,7 +605,6 @@ export default class Column<T = any> implements ColumnType {
       //   res = await DbColumn.read(this.id);
       //   break;
     }
-    this.colOptions = res;
     return res;
   }
 
@@ -625,6 +628,7 @@ export default class Column<T = any> implements ColumnType {
     return this.model;
   }
 
+  @Time((_, p) => `${p.fk_model_id}`)
   public static async list(
     context: NcContext,
     {
@@ -639,6 +643,7 @@ export default class Column<T = any> implements ColumnType {
     const cachedList = await NocoCache.getList(CacheScope.COLUMN, [
       fk_model_id,
     ]);
+
     let { list: columnsList } = cachedList;
     const { isNoneList } = cachedList;
 
@@ -681,17 +686,20 @@ export default class Column<T = any> implements ColumnType {
 
     return Promise.all(
       columnsList.map(async (m) => {
-        if (defaultViewColumns.length) {
-          m.meta = {
-            ...parseMetaProp(m),
-            defaultViewColOrder: defaultViewColumnMap[m.id]?.order,
-            defaultViewColVisibility: defaultViewColumnMap[m.id]?.show,
-          };
-        }
+        return timeit(`columnOptions(${m.id})`, async () => {
+          if (defaultViewColumns.length) {
+            m.meta = {
+              ...parseMetaProp(m),
+              defaultViewColOrder: defaultViewColumnMap[m.id]?.order,
+              defaultViewColVisibility: defaultViewColumnMap[m.id]?.show,
+            };
+          }
 
-        const column = new Column(m);
-        await column.getColOptions(context, ncMeta);
-        return column;
+          const column = new Column(m);
+          await column.getColOptions(context, ncMeta);
+
+          return column;
+        });
       }),
     );
 

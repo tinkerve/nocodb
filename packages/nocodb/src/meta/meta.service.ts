@@ -6,13 +6,15 @@ import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import type * as knex from 'knex';
 import type { Knex } from 'knex';
-import type { Condition } from '~/db/CustomKnex';
+import type { Condition, ConditionVal } from '~/db/CustomKnex';
 import XcMigrationSource from '~/meta/migrations/XcMigrationSource';
 import XcMigrationSourcev2 from '~/meta/migrations/XcMigrationSourcev2';
 import { XKnex } from '~/db/CustomKnex';
 import { NcConfig } from '~/utils/nc-config';
 import { MetaTable, RootScopes, RootScopeTables } from '~/utils/globals';
 import { NcError } from '~/helpers/catchError';
+import { logflow, Time, timeit } from 'src/utils';
+import DataLoader from 'dataloader';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -24,6 +26,13 @@ const nanoidv2 = customAlphabet('1234567890abcdefghijklmnopqrstuvwxyz', 14);
 export class MetaService {
   private _knex: knex.Knex;
   private _config: any;
+  private _metaLoader = new DataLoader(
+    this._batchMetaGet2.bind(this) as typeof this._batchMetaGet2,
+    {
+      batchScheduleFn: (fn) => setTimeout(() => fn(), 10),
+      cache: false,
+    },
+  );
 
   constructor(config: NcConfig, @Optional() trx = null) {
     this._config = config;
@@ -409,7 +418,7 @@ export class MetaService {
     return query.del();
   }
 
-  /***
+  /**
    * Get meta data
    * @param workspace_id - Workspace id
    * @param base_id - Base id
@@ -418,6 +427,8 @@ export class MetaService {
    * @param fields - Fields to be selected
    * @param xcCondition - Additional nested or complex condition to be added to the query.
    */
+
+  @Time()
   public async metaGet2(
     workspace_id: string,
     base_id: string,
@@ -425,54 +436,303 @@ export class MetaService {
     idOrCondition: string | { [p: string]: any },
     fields?: string[],
     xcCondition?: Condition,
+  ) {
+    // NOTE: this means that we can just use shllow equal so we can compare it manually
+    const isPlainFilter =
+      typeof idOrCondition === 'string' ||
+      (idOrCondition &&
+        Object.keys(idOrCondition).length > 0 &&
+        Object.values(idOrCondition).every(
+          (f) =>
+            typeof f === 'string' ||
+            typeof f === 'boolean' ||
+            typeof f === 'number',
+        ));
+
+    if (xcCondition || !isPlainFilter) {
+      return await timeit('Get without batching', () =>
+        this._metaGet2Single(
+          workspace_id,
+          base_id,
+          target,
+          idOrCondition,
+          fields,
+          xcCondition,
+        ),
+      );
+    }
+
+    // const [original, batched] = await Promise.all([
+    //   this._metaGet2Single(
+    //     workspace_id,
+    //     base_id,
+    //     target,
+    //     idOrCondition,
+    //     fields,
+    //     xcCondition,
+    //   ),
+    //   this._metaLoader.load({
+    //     workspace_id,
+    //     project_id: base_id,
+    //     table_id: target,
+    //     plainFilter:
+    //       typeof idOrCondition === 'string'
+    //         ? { id: idOrCondition }
+    //         : idOrCondition,
+    //     fields,
+    //   }),
+    // ]);
+
+    // if (!deepEqual(original, batched)) {
+    //   console.log('DIFF(original vs batched)', original, batched);
+    //   console.log('PARAMS', {
+    //     workspace_id,
+    //     project_id: base_id,
+    //     table_id: target,
+    //     plainFilter:
+    //       typeof idOrCondition === 'string'
+    //         ? { id: idOrCondition }
+    //         : idOrCondition,
+    //     fields,
+    //   });
+    // }
+    // return batched;
+
+    return await timeit('Get batched', () =>
+      this._metaLoader.load({
+        workspace_id,
+        project_id: base_id,
+        table_id: target,
+        plainFilter:
+          typeof idOrCondition === 'string'
+            ? { id: idOrCondition }
+            : idOrCondition,
+        fields,
+      }),
+    );
+  }
+
+  private _groupBy<T, TKey extends PropertyKey = string>(
+    arr: T[],
+    predicate: (item: T) => TKey,
+  ): Record<TKey, T[]> {
+    const result = {} as Record<PropertyKey, T[]>;
+    for (const item of arr) {
+      const key = predicate(item);
+      if (!result[key]) result[key] = [];
+      result[key].push(item);
+    }
+    return result as Record<TKey, T[]>;
+  }
+  private async _batchMetaGet2(
+    requests: Array<{
+      // By default these two are constant in out case (null, pvrjloyzx8hzjqv)
+      // and these never seem to be used in the query at all
+      workspace_id: string;
+      project_id: string;
+      // These two are essentially what we care about
+      table_id: string;
+      plainFilter?: { [p: string]: number | string | boolean };
+      // These are (almost) always undefined so we'll just ignore it for now :)
+      fields?: string[];
+      // xcCondition?: Condition;
+    }>,
+  ) {
+    const queryKeyOf = (k: (typeof requests)[0]) =>
+      [k.workspace_id, k.project_id, k.table_id].join(':');
+    const queriesByQueryKey = this._groupBy(requests, (k) => queryKeyOf(k));
+
+    const retrieved = {} as Record<string, Promise<any[]>>;
+
+    for (const [queryKey, groupedRequests] of Object.entries(
+      queriesByQueryKey,
+    )) {
+      // NOTE: table_id, workspace_id, and project_id are unique
+      const { workspace_id, table_id, project_id } = groupedRequests[0]; // Should always have 1
+      const query = this.knexConnection(table_id);
+
+      if (
+        workspace_id === RootScopes.BYPASS &&
+        table_id === RootScopes.BYPASS
+      ) {
+        //No checks
+      } else if (workspace_id === table_id) {
+        if (!Object.values(RootScopes).includes(workspace_id as RootScopes)) {
+          retrieved[queryKey] = promiseError(() =>
+            NcError.metaError({
+              message: 'Invalid scope',
+              sql: '',
+            }),
+          );
+          continue;
+        }
+        if (!RootScopeTables[workspace_id].includes(table_id)) {
+          retrieved[queryKey] = promiseError(() =>
+            NcError.metaError({
+              message: 'Table not accessible from this scope',
+              sql: '',
+            }),
+          );
+          continue;
+        }
+      } else if (!table_id) {
+        retrieved[queryKey] = promiseError(() =>
+          NcError.metaError({
+            message: 'Base ID is required',
+            sql: '',
+          }),
+        );
+        continue;
+      } else {
+        // This just assigns base_id, and since its unique in this loop it is fine
+        this.contextCondition(query, workspace_id, project_id, table_id);
+      }
+
+      // Restrict to only what is available
+      // query.limit(groupedRequests.length);
+      const [reqWithFilter, reqWithoutFilter] = split(
+        groupedRequests,
+        (item) => item.plainFilter && Object.keys(item.plainFilter).length > 0,
+      );
+
+      // HACK: the `then` is to force knex to fetch immediately
+      // const startTime = performance.now();
+      // retrieved[queryKey] = query.then((x) => {
+      //   const endTime = performance.now();
+      //   const duration = (endTime - startTime) / 1000;
+      //   console.log(`Retrieved ${x.length} in ${duration.toFixed(3)}s`);
+      //   return x;
+      // });
+
+      // if (reqWithoutFilter.length > 0)
+      //   retrieved[queryKey + `:first`] = query
+      //     .clone()
+      //     .first()
+      //     .then((x) => x);
+      // if (reqWithFilter.length > 0)
+
+      const startTime = performance.now();
+      const filter =
+        reqWithFilter.length > 0 && reqWithoutFilter.length <= 0
+          ? {
+              _or: reqWithFilter.map(({ plainFilter: filter }) => {
+                // Just mutably override to make compute cheaper
+                const dbFilter = {} as Condition;
+                for (const filterKey of Object.keys(filter)) {
+                  dbFilter[filterKey] = {
+                    eq: filter[filterKey],
+                  } satisfies ConditionVal;
+                }
+                return dbFilter;
+              }),
+            }
+          : {};
+
+      console.log(
+        `Batch Load ${groupedRequests.length} items for ${table_id}`,
+        groupedRequests.slice(0, 1),
+      );
+      retrieved[queryKey] =
+        reqWithFilter.length > 0 && reqWithoutFilter.length <= 0
+          ? query.condition(filter).then((x) => x)
+          : // TODO: this should probably be limited to one
+            query.then((x) => x);
+      // .then((x) => {
+      //   const endTime = performance.now();
+      //   const duration = (endTime - startTime) / 1000;
+      //   console.log(
+      //     `Loaded ${
+      //       x.length
+      //     } items from ${table_id} in ${duration.toFixed(3)}s`,
+      //   );
+      //   console.log('filter', filter._or);
+      //   return x;
+      // })
+    }
+
+    return requests.map((req) =>
+      retrieved[queryKeyOf(req)].then((list) => {
+        let item = list[0];
+        const { plainFilter, fields } = req;
+
+        if (plainFilter) {
+          const filterEntries = Object.entries(plainFilter);
+          const found = list.find((v) =>
+            filterEntries.every(([key, value]) => v[key] === value),
+          );
+          item = found;
+        }
+        if (!item) return undefined; // NOTE: according to the original function, this is supposedly the return
+
+        if (fields) {
+          const includeField = new Set(fields);
+          item = Object.fromEntries(
+            Object.entries(item).filter(([key]) => !includeField.has(key)),
+          );
+        }
+        return item;
+      }),
+    );
+  }
+
+  private async _metaGet2Single(
+    workspace_id: string,
+    base_id: string,
+    target: string,
+    idOrCondition: string | { [p: string]: any },
+    fields?: string[],
+    xcCondition?: Condition,
   ): Promise<any> {
-    const query = this.knexConnection(target);
+    return timeit('metaGet2Single', async () => {
+      const query = this.knexConnection(target);
 
-    if (xcCondition) {
-      query.condition(xcCondition);
-    }
-
-    if (fields?.length) {
-      query.select(...fields);
-    }
-
-    if (workspace_id === RootScopes.BYPASS && base_id === RootScopes.BYPASS) {
-      // bypass
-    } else if (workspace_id === base_id) {
-      if (!Object.values(RootScopes).includes(workspace_id as RootScopes)) {
-        NcError.metaError({
-          message: 'Invalid scope',
-          sql: '',
-        });
+      if (xcCondition) {
+        query.condition(xcCondition);
       }
 
-      if (!RootScopeTables[workspace_id].includes(target)) {
-        NcError.metaError({
-          message: 'Table not accessible from this scope',
-          sql: '',
-        });
-      }
-    } else {
-      if (!base_id) {
-        NcError.metaError({
-          message: 'Base ID is required',
-          sql: '',
-        });
+      if (fields?.length) {
+        query.select(...fields);
       }
 
-      this.contextCondition(query, workspace_id, base_id, target);
-    }
+      if (workspace_id === RootScopes.BYPASS && base_id === RootScopes.BYPASS) {
+        // bypass
+      } else if (workspace_id === base_id) {
+        if (!Object.values(RootScopes).includes(workspace_id as RootScopes)) {
+          NcError.metaError({
+            message: 'Invalid scope',
+            sql: '',
+          });
+        }
 
-    if (!idOrCondition) {
+        if (!RootScopeTables[workspace_id].includes(target)) {
+          NcError.metaError({
+            message: 'Table not accessible from this scope',
+            sql: '',
+          });
+        }
+      } else {
+        if (!base_id) {
+          NcError.metaError({
+            message: 'Base ID is required',
+            sql: '',
+          });
+        }
+
+        this.contextCondition(query, workspace_id, base_id, target);
+      }
+
+      if (!idOrCondition) {
+        return query.first();
+      }
+
+      if (typeof idOrCondition !== 'object') {
+        query.where('id', idOrCondition);
+      } else {
+        query.where(idOrCondition);
+      }
+
       return query.first();
-    }
-
-    if (typeof idOrCondition !== 'object') {
-      query.where('id', idOrCondition);
-    } else {
-      query.where(idOrCondition);
-    }
-    return query.first();
+    });
   }
 
   /***
@@ -506,6 +766,7 @@ export class MetaService {
    * @param args.orderBy - Order by fields
    * @returns {Promise<any[]>} - List of records
    * */
+  // @Time()
   public async metaList2(
     workspace_id: string,
     base_id: string,
@@ -847,4 +1108,56 @@ export class MetaService {
       sql,
     });
   }
+}
+
+function deepEqual(obj1, obj2) {
+  // 1. Primitive check or Same Reference
+  if (obj1 === obj2) return true;
+
+  // 2. Null check (null is type "object")
+  if (obj1 == null || obj2 == null) return obj1 === obj2;
+
+  // 3. Type check
+  if (typeof obj1 !== 'object' || typeof obj2 !== 'object') return false;
+
+  // 4. Array Length Check
+  if (Array.isArray(obj1) !== Array.isArray(obj2)) return false;
+  if (Array.isArray(obj1) && obj1.length !== obj2.length) return false;
+
+  // 5. Keys Count Check
+  const keys1 = Object.keys(obj1);
+  const keys2 = Object.keys(obj2);
+  if (keys1.length !== keys2.length) return false;
+
+  // 6. Recursive Comparison
+  for (let key of keys1) {
+    if (!keys2.includes(key) || !deepEqual(obj1[key], obj2[key])) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function promiseError(throwFn: () => void) {
+  return new Promise<any[]>(throwFn);
+}
+
+function split<T, TReturn extends T = T>(
+  arr: T[],
+  predicate: (item: T) => item is TReturn,
+): [TReturn[], Exclude<T, TReturn>[]];
+function split<T, TReturn extends T = T>(
+  arr: T[],
+  predicate: (item: T) => boolean,
+): [T[], T[]];
+function split<T>(arr: T[], predicate: (item: T) => boolean) {
+  const matching = [] as T[];
+  const nonMatching = [] as T[];
+
+  for (const item of arr)
+    if (predicate(item)) matching.push(item);
+    else nonMatching.push(item as any);
+
+  return [matching, nonMatching] as const;
 }

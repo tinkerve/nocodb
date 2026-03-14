@@ -26,6 +26,7 @@ import {
   View,
 } from '~/models';
 import { NcError } from '~/helpers/catchError';
+import { Time, timeit } from 'src/utils';
 
 type Ast = {
   [key: string]: 1 | true | null | Ast;
@@ -70,252 +71,261 @@ const getAst = async (
   dependencyFields: DependantFields;
   parsedQuery: DependantFields;
 }> => {
-  // set default values of dependencyFields and nested
-  dependencyFields.nested = dependencyFields.nested || {};
-  dependencyFields.fieldsSet = dependencyFields.fieldsSet || new Set();
+  return timeit('getAst', async () => {
+    // set default values of dependencyFields and nested
+    dependencyFields.nested = dependencyFields.nested || {};
+    dependencyFields.fieldsSet = dependencyFields.fieldsSet || new Set();
 
-  let coverImageId;
-  let dependencyFieldsForCalenderView;
-  let kanbanGroupColumnId;
-  let sortColumnIds: string[] = [];
-  let filterColumnIds: string[] = [];
-  if (view && view.type === ViewTypes.GALLERY) {
-    const gallery = await GalleryView.get(context, view.id);
-    coverImageId = gallery.fk_cover_image_col_id;
-  } else if (view && view.type === ViewTypes.KANBAN) {
-    const kanban = await KanbanView.get(context, view.id);
-    coverImageId = kanban.fk_cover_image_col_id;
-    kanbanGroupColumnId = kanban.fk_grp_col_id;
-  } else if (view && view.type === ViewTypes.CALENDAR) {
-    // const calendar = await CalendarView.get(view.id);
-    // coverImageId = calendar.fk_cover_image_col_id;
-    const calenderRanges = await CalendarRange.read(context, view.id);
-    if (calenderRanges) {
-      dependencyFieldsForCalenderView = calenderRanges.ranges
-        .flatMap((obj) =>
-          [obj.fk_from_column_id, (obj as any).fk_to_column_id].filter(Boolean),
-        )
-        .map(String);
-    }
-  }
-
-  if (view && includeSortAndFilterColumns) {
-    const sorts = await view.getSorts(context);
-    const filters = await Filter.allViewFilterList(context, {
-      viewId: view.id,
-    });
-    sortColumnIds = sorts.map((s) => s.fk_column_id);
-    filterColumnIds = filters.map((f) => f.fk_column_id);
-  }
-
-  if (!model.columns?.length) await model.getColumns(context);
-
-  // extract only pk and pv
-  if (extractOnlyPrimaries) {
-    const ast: Ast = {
-      ...(model.primaryKeys
-        ? model.primaryKeys.reduce((o, pk) => ({ ...o, [pk.title]: 1 }), {})
-        : {}),
-      ...(model.displayValue ? { [model.displayValue.title]: 1 } : {}),
-    };
-    await Promise.all(
-      model.primaryKeys.map((c) =>
-        extractDependencies(context, c, dependencyFields),
-      ),
-    );
-
-    await extractDependencies(context, model.displayValue, dependencyFields);
-
-    return { ast, dependencyFields, parsedQuery: dependencyFields };
-  }
-
-  if (extractOnlyRangeFields) {
-    const ast: Ast = {
-      ...(dependencyFieldsForCalenderView || []).reduce((o, f) => {
-        const col = model.columns.find((c) => c.id === f);
-        return { ...o, [col.title]: 1 };
-      }, {}),
-    };
-
-    await Promise.all(
-      (dependencyFieldsForCalenderView || []).map((f) =>
-        extractDependencies(
-          context,
-          model.columns.find((c) => c.id === f),
-          dependencyFields,
-        ),
-      ),
-    );
-
-    return { ast, dependencyFields, parsedQuery: dependencyFields };
-  }
-
-  let fields = query?.fields || query?.f;
-  if (fields && fields !== '*') {
-    fields = Array.isArray(fields) ? fields : fields.split(',');
-    if (throwErrorIfInvalidParams) {
-      const colAliasMap = await model.getColAliasMapping(context);
-      const aliasColMap = await model.getAliasColObjMap(context);
-      const invalidFields = fields.filter(
-        (f) => !colAliasMap[f] && !aliasColMap[f],
-      );
-      if (invalidFields.length) {
-        NcError.get(context).fieldNotFound(invalidFields.join(', '));
+    let coverImageId;
+    let dependencyFieldsForCalenderView;
+    let kanbanGroupColumnId;
+    let sortColumnIds: string[] = [];
+    let filterColumnIds: string[] = [];
+    if (view && view.type === ViewTypes.GALLERY) {
+      const gallery = await GalleryView.get(context, view.id);
+      coverImageId = gallery.fk_cover_image_col_id;
+    } else if (view && view.type === ViewTypes.KANBAN) {
+      const kanban = await KanbanView.get(context, view.id);
+      coverImageId = kanban.fk_cover_image_col_id;
+      kanbanGroupColumnId = kanban.fk_grp_col_id;
+    } else if (view && view.type === ViewTypes.CALENDAR) {
+      // const calendar = await CalendarView.get(view.id);
+      // coverImageId = calendar.fk_cover_image_col_id;
+      const calenderRanges = await CalendarRange.read(context, view.id);
+      if (calenderRanges) {
+        dependencyFieldsForCalenderView = calenderRanges.ranges
+          .flatMap((obj) =>
+            [obj.fk_from_column_id, (obj as any).fk_to_column_id].filter(
+              Boolean,
+            ),
+          )
+          .map(String);
       }
     }
-  } else {
-    fields = null;
-  }
 
-  let allowedCols = null;
-  if (view) {
-    allowedCols = (await View.getColumns(context, view.id)).reduce(
-      (o, c) => ({
-        ...o,
-        [c.fk_column_id]:
-          c.show ||
-          (c instanceof GridViewColumn && c.group_by) ||
-          (c instanceof KanbanViewColumn &&
-            c.fk_column_id === kanbanGroupColumnId),
-      }),
-      {},
-    );
-    if (coverImageId) {
-      allowedCols[coverImageId] = 1;
-    }
-    if (dependencyFieldsForCalenderView) {
-      dependencyFieldsForCalenderView.forEach((id) => {
-        allowedCols[id] = 1;
+    if (view && includeSortAndFilterColumns) {
+      const sorts = await view.getSorts(context);
+      const filters = await Filter.allViewFilterList(context, {
+        viewId: view.id,
       });
+      sortColumnIds = sorts.map((s) => s.fk_column_id);
+      filterColumnIds = filters.map((f) => f.fk_column_id);
     }
-    if (includeSortAndFilterColumns) {
-      sortColumnIds.forEach((id) => (allowedCols[id] = 1));
-      filterColumnIds.forEach((id) => (allowedCols[id] = 1));
-    }
-  }
 
-  const columns = model.columns;
+    if (!model.columns?.length) await model.getColumns(context);
 
-  const ast: Ast = await columns.reduce(async (obj, col: Column) => {
-    let value: number | boolean | { [key: string]: any } = 1;
-    const nestedFields =
-      query?.nested?.[col.title]?.fields || query?.nested?.[col.title]?.f;
-    if (nestedFields && nestedFields !== '*') {
-      if (col.uidt === UITypes.LinkToAnotherRecord) {
-        const colOpt = await col.getColOptions<LinkToAnotherRecordColumn>(
-          context,
-        );
-        const model = await colOpt.getRelatedTable(context);
-
-        const { refContext: refTableContext } = colOpt.getRelContext(context);
-
-        const { ast } = await getAst(refTableContext, {
-          model,
-          query: query?.nested?.[col.title],
-          dependencyFields: (dependencyFields.nested[col.title] =
-            dependencyFields.nested[col.title] || {
-              nested: {},
-              fieldsSet: new Set(),
-            }),
-          throwErrorIfInvalidParams,
-        });
-
-        value = ast;
-
-        // todo: include field relative to the relation => pk / fk
-      } else if (col.uidt === UITypes.Links) {
-        value = 1;
-      } else {
-        value = (
-          Array.isArray(nestedFields) ? nestedFields : nestedFields.split(',')
-        ).reduce((o, f) => ({ ...o, [f]: 1 }), {});
-      }
-    } else if (col.uidt === UITypes.LinkToAnotherRecord) {
-      const colOpt = await col.getColOptions<LinkToAnotherRecordColumn>(
-        context,
+    // extract only pk and pv
+    if (extractOnlyPrimaries) {
+      const ast: Ast = {
+        ...(model.primaryKeys
+          ? model.primaryKeys.reduce((o, pk) => ({ ...o, [pk.title]: 1 }), {})
+          : {}),
+        ...(model.displayValue ? { [model.displayValue.title]: 1 } : {}),
+      };
+      await Promise.all(
+        model.primaryKeys.map((c) =>
+          extractDependencies(context, c, dependencyFields),
+        ),
       );
 
-      const { refContext: refTableContext } = colOpt.getRelContext(context);
+      await extractDependencies(context, model.displayValue, dependencyFields);
 
-      const model = await colOpt.getRelatedTable(context);
-
-      value = (
-        await getAst(refTableContext, {
-          model,
-          query: query?.nested?.[col.title],
-          extractOnlyPrimaries: nestedFields !== '*',
-          dependencyFields: (dependencyFields.nested[col.title] =
-            dependencyFields.nested[col.title] || {
-              nested: {},
-              fieldsSet: new Set(),
-            }),
-          throwErrorIfInvalidParams,
-        })
-      ).ast;
+      return { ast, dependencyFields, parsedQuery: dependencyFields };
     }
-    let isRequested;
 
-    const isInFields = fields?.length && fields.includes(col.title);
-    const isSortOrFilterColumn =
-      includeSortAndFilterColumns &&
-      (sortColumnIds.includes(col.id) || filterColumnIds.includes(col.id));
+    if (extractOnlyRangeFields) {
+      const ast: Ast = {
+        ...(dependencyFieldsForCalenderView || []).reduce((o, f) => {
+          const col = model.columns.find((c) => c.id === f);
+          return { ...o, [col.title]: 1 };
+        }, {}),
+      };
 
-    if (isSortOrFilterColumn) {
-      isRequested = true;
+      await Promise.all(
+        (dependencyFieldsForCalenderView || []).map((f) =>
+          extractDependencies(
+            context,
+            model.columns.find((c) => c.id === f),
+            dependencyFields,
+          ),
+        ),
+      );
+
+      return { ast, dependencyFields, parsedQuery: dependencyFields };
     }
-    // exclude system column and foreign key from API response for v3
-    else if (
-      col.system &&
-      ![UITypes.CreatedTime, UITypes.LastModifiedTime].includes(col.uidt) &&
-      apiVersion === NcApiVersion.V3
-    ) {
-      isRequested = false;
-    } else if (isCreatedOrLastModifiedByCol(col) && col.system) {
-      isRequested = false;
-    } else if (isOrderCol(col) && col.system) {
-      isRequested = extractOrderColumn || getHiddenColumn;
-    } else if (getHiddenColumn) {
-      isRequested =
-        !isSystemColumn(col) ||
-        (isCreatedOrLastModifiedTimeCol(col) && col.system) ||
-        // include all non-has-many system links(self-link) columns since has-many is part of mm relation and which is not required
-        (isLinksOrLTAR(col) &&
-          col.system &&
-          [
-            RelationTypes.BELONGS_TO,
-            RelationTypes.MANY_TO_MANY,
-            RelationTypes.ONE_TO_ONE,
-          ].includes(
-            (col.colOptions as LinkToAnotherRecordColumn)
-              ?.type as RelationTypes,
-          )) ||
-        col.pk;
-    } else if (allowedCols && (!includePkByDefault || !col.pk)) {
-      isRequested =
-        allowedCols[col.id] &&
-        (!isSystemColumn(col) ||
-          (!view && isCreatedOrLastModifiedTimeCol(col)) ||
-          view.show_system_fields ||
-          (dependencyFieldsForCalenderView ?? []).includes(col.id) ||
-          col.pv) &&
-        (!fields?.length || isInFields) &&
-        value;
-    } else if (fields?.length) {
-      isRequested = isInFields && value;
+
+    let fields = query?.fields || query?.f;
+    if (fields && fields !== '*') {
+      fields = Array.isArray(fields) ? fields : fields.split(',');
+      if (throwErrorIfInvalidParams) {
+        const colAliasMap = await model.getColAliasMapping(context);
+        const aliasColMap = await model.getAliasColObjMap(context);
+        const invalidFields = fields.filter(
+          (f) => !colAliasMap[f] && !aliasColMap[f],
+        );
+        if (invalidFields.length) {
+          NcError.get(context).fieldNotFound(invalidFields.join(', '));
+        }
+      }
     } else {
-      isRequested = value;
+      fields = null;
     }
 
-    if (isRequested || col.pk)
-      await extractDependencies(context, col, dependencyFields);
+    let allowedCols = null;
+    if (view) {
+      allowedCols = (await View.getColumns(context, view.id)).reduce(
+        (o, c) => ({
+          ...o,
+          [c.fk_column_id]:
+            c.show ||
+            (c instanceof GridViewColumn && c.group_by) ||
+            (c instanceof KanbanViewColumn &&
+              c.fk_column_id === kanbanGroupColumnId),
+        }),
+        {},
+      );
+      if (coverImageId) {
+        allowedCols[coverImageId] = 1;
+      }
+      if (dependencyFieldsForCalenderView) {
+        dependencyFieldsForCalenderView.forEach((id) => {
+          allowedCols[id] = 1;
+        });
+      }
+      if (includeSortAndFilterColumns) {
+        sortColumnIds.forEach((id) => (allowedCols[id] = 1));
+        filterColumnIds.forEach((id) => (allowedCols[id] = 1));
+      }
+    }
 
-    return {
-      ...(await obj),
-      [col.title]: isRequested,
-    };
-  }, Promise.resolve({}));
+    const columns = model.columns;
 
-  return { ast, dependencyFields, parsedQuery: dependencyFields };
+    const ast: Ast = await timeit('create ast', () =>
+      columns.reduce(async (obj, col: Column) => {
+        let value: number | boolean | { [key: string]: any } = 1;
+        const nestedFields =
+          query?.nested?.[col.title]?.fields || query?.nested?.[col.title]?.f;
+        if (nestedFields && nestedFields !== '*') {
+          if (col.uidt === UITypes.LinkToAnotherRecord) {
+            const colOpt = await col.getColOptions<LinkToAnotherRecordColumn>(
+              context,
+            );
+            const model = await colOpt.getRelatedTable(context);
+
+            const { refContext: refTableContext } =
+              colOpt.getRelContext(context);
+
+            const { ast } = await getAst(refTableContext, {
+              model,
+              query: query?.nested?.[col.title],
+              dependencyFields: (dependencyFields.nested[col.title] =
+                dependencyFields.nested[col.title] || {
+                  nested: {},
+                  fieldsSet: new Set(),
+                }),
+              throwErrorIfInvalidParams,
+            });
+
+            value = ast;
+
+            // todo: include field relative to the relation => pk / fk
+          } else if (col.uidt === UITypes.Links) {
+            value = 1;
+          } else {
+            value = (
+              Array.isArray(nestedFields)
+                ? nestedFields
+                : nestedFields.split(',')
+            ).reduce((o, f) => ({ ...o, [f]: 1 }), {});
+          }
+        } else if (col.uidt === UITypes.LinkToAnotherRecord) {
+          const colOpt = await col.getColOptions<LinkToAnotherRecordColumn>(
+            context,
+          );
+
+          const { refContext: refTableContext } = colOpt.getRelContext(context);
+
+          const model = await colOpt.getRelatedTable(context);
+
+          value = (
+            await getAst(refTableContext, {
+              model,
+              query: query?.nested?.[col.title],
+              extractOnlyPrimaries: nestedFields !== '*',
+              dependencyFields: (dependencyFields.nested[col.title] =
+                dependencyFields.nested[col.title] || {
+                  nested: {},
+                  fieldsSet: new Set(),
+                }),
+              throwErrorIfInvalidParams,
+            })
+          ).ast;
+        }
+        let isRequested;
+
+        const isInFields = fields?.length && fields.includes(col.title);
+        const isSortOrFilterColumn =
+          includeSortAndFilterColumns &&
+          (sortColumnIds.includes(col.id) || filterColumnIds.includes(col.id));
+
+        if (isSortOrFilterColumn) {
+          isRequested = true;
+        }
+        // exclude system column and foreign key from API response for v3
+        else if (
+          col.system &&
+          ![UITypes.CreatedTime, UITypes.LastModifiedTime].includes(col.uidt) &&
+          apiVersion === NcApiVersion.V3
+        ) {
+          isRequested = false;
+        } else if (isCreatedOrLastModifiedByCol(col) && col.system) {
+          isRequested = false;
+        } else if (isOrderCol(col) && col.system) {
+          isRequested = extractOrderColumn || getHiddenColumn;
+        } else if (getHiddenColumn) {
+          isRequested =
+            !isSystemColumn(col) ||
+            (isCreatedOrLastModifiedTimeCol(col) && col.system) ||
+            // include all non-has-many system links(self-link) columns since has-many is part of mm relation and which is not required
+            (isLinksOrLTAR(col) &&
+              col.system &&
+              [
+                RelationTypes.BELONGS_TO,
+                RelationTypes.MANY_TO_MANY,
+                RelationTypes.ONE_TO_ONE,
+              ].includes(
+                (col.colOptions as LinkToAnotherRecordColumn)
+                  ?.type as RelationTypes,
+              )) ||
+            col.pk;
+        } else if (allowedCols && (!includePkByDefault || !col.pk)) {
+          isRequested =
+            allowedCols[col.id] &&
+            (!isSystemColumn(col) ||
+              (!view && isCreatedOrLastModifiedTimeCol(col)) ||
+              view.show_system_fields ||
+              (dependencyFieldsForCalenderView ?? []).includes(col.id) ||
+              col.pv) &&
+            (!fields?.length || isInFields) &&
+            value;
+        } else if (fields?.length) {
+          isRequested = isInFields && value;
+        } else {
+          isRequested = value;
+        }
+
+        if (isRequested || col.pk)
+          await extractDependencies(context, col, dependencyFields);
+
+        return {
+          ...(await obj),
+          [col.title]: isRequested,
+        };
+      }, Promise.resolve({})),
+    );
+
+    return { ast, dependencyFields, parsedQuery: dependencyFields };
+  });
 };
 
 const extractDependencies = async (

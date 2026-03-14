@@ -39,6 +39,7 @@ import {
   prepareForResponse,
 } from '~/utils/modelUtils';
 import { Source } from '~/models';
+import { logflow, Time, traceConditional } from 'src/utils';
 
 const logger = new Logger('Model');
 
@@ -84,19 +85,23 @@ export default class Model implements TableType {
     return data && new Model(data);
   }
 
+  @Time()
   public async getColumns(
     context: NcContext,
     ncMeta = Noco.ncMeta,
     defaultViewId = undefined,
     updateColumns = true,
   ): Promise<Column[]> {
-    const columns = await Column.list(
-      context,
-      {
-        fk_model_id: this.id,
-        fk_default_view_id: defaultViewId,
-      },
-      ncMeta,
+    logflow(`Load columns for: ${this.id}`);
+    const columns = await traceConditional(false, () =>
+      Column.list(
+        context,
+        {
+          fk_model_id: this.id,
+          fk_default_view_id: defaultViewId,
+        },
+        ncMeta,
+      ),
     );
 
     if (!updateColumns) return columns;
@@ -130,6 +135,7 @@ export default class Model implements TableType {
   }
 
   // @ts-ignore
+  // @Time()
   public async getViews(
     context: NcContext,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -486,6 +492,7 @@ export default class Model implements TableType {
     return null;
   }
 
+  // @Time()
   public static async getBaseModelSQL(
     context: NcContext,
     args: {
@@ -886,6 +893,7 @@ export default class Model implements TableType {
     }, {});
   }
 
+  @Time()
   async getColAliasMapping(context: NcContext) {
     return (await this.getColumns(context)).reduce((o, c) => {
       if (c.column_name) {
@@ -1135,6 +1143,7 @@ export default class Model implements TableType {
     ));
   }
 
+  @Time()
   async getAliasColObjMap(context: NcContext, columns?: Column[]) {
     return (columns || (await this.getColumns(context))).reduce(
       (sortAgg, c) => ({ ...sortAgg, [c.title]: c }),

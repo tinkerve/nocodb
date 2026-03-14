@@ -6,6 +6,7 @@ import type Column from '~/models/Column';
 import { NcError } from '~/helpers/catchError';
 import { Model, View } from '~/models';
 import Base from '~/models/Base';
+import { timeit } from 'src/utils';
 
 export interface PathParams {
   baseName: string;
@@ -27,24 +28,26 @@ export async function getViewAndModelByAliasOrId(
     viewName?: string;
   },
 ) {
-  const base = await Base.getWithInfoByTitleOrId(context, param.baseName);
+  return timeit('getViewAndModelByAliasOrId', async () => {
+    const base = await Base.getWithInfoByTitleOrId(context, param.baseName);
 
-  const model = await Model.getByAliasOrId(context, {
-    base_id: base.id,
-    aliasOrId: param.tableName,
+    const model = await Model.getByAliasOrId(context, {
+      base_id: base.id,
+      aliasOrId: param.tableName,
+    });
+
+    if (!model) NcError.tableNotFound(param.tableName);
+
+    const view =
+      param.viewName &&
+      (await View.getByTitleOrId(context, {
+        titleOrId: param.viewName,
+        fk_model_id: model.id,
+      }));
+    if (param.viewName && !view) NcError.viewNotFound(param.viewName);
+
+    return { model, view };
   });
-
-  if (!model) NcError.tableNotFound(param.tableName);
-
-  const view =
-    param.viewName &&
-    (await View.getByTitleOrId(context, {
-      titleOrId: param.viewName,
-      fk_model_id: model.id,
-    }));
-  if (param.viewName && !view) NcError.viewNotFound(param.viewName);
-
-  return { model, view };
 }
 
 export async function serializeCellValue(
@@ -106,49 +109,44 @@ export async function serializeCellValue(
         .map((user) => `${user.email}`)
         .join(', ');
     }
-    case UITypes.Lookup:
-      {
-        const colOptions = await column.getColOptions<LookupColumn>(context);
-        const relationColOptions = await colOptions
-          .getRelationColumn(context)
-          .then((col) => col.getColOptions<LinkToAnotherRecordColumn>(context));
-        const { refContext } = relationColOptions.getRelContext(context);
+    case UITypes.Lookup: {
+      const colOptions = await column.getColOptions<LookupColumn>(context);
+      const relationColOptions = await colOptions
+        .getRelationColumn(context)
+        .then((col) => col.getColOptions<LinkToAnotherRecordColumn>(context));
+      const { refContext } = relationColOptions.getRelContext(context);
 
-        const lookupColumn = await colOptions.getLookupColumn(refContext);
-        return (
-          await Promise.all(
-            [...(Array.isArray(value) ? value : [value])].map(async (v) =>
-              serializeCellValue(refContext, {
-                value: v,
-                column: lookupColumn,
-                siteUrl,
-              }),
-            ),
-          )
-        ).join(', ');
-      }
-      break;
-    case UITypes.LinkToAnotherRecord:
-      {
-        const colOptions =
-          await column.getColOptions<LinkToAnotherRecordColumn>(context);
-        const { refContext } = await colOptions.getRelContext(context);
-        const relatedModel = await colOptions.getRelatedTable(refContext);
-        await relatedModel.getColumns(refContext);
-        return [...(Array.isArray(value) ? value : [value])]
-          .map((v) => {
-            return v[relatedModel.displayValue?.title];
-          })
-          .join(', ');
-      }
-      break;
-    case UITypes.Decimal:
-      {
-        if (isNaN(Number(value))) return null;
+      const lookupColumn = await colOptions.getLookupColumn(refContext);
+      return (
+        await Promise.all(
+          [...(Array.isArray(value) ? value : [value])].map(async (v) =>
+            serializeCellValue(refContext, {
+              value: v,
+              column: lookupColumn,
+              siteUrl,
+            }),
+          ),
+        )
+      ).join(', ');
+    }
+    case UITypes.LinkToAnotherRecord: {
+      const colOptions = await column.getColOptions<LinkToAnotherRecordColumn>(
+        context,
+      );
+      const { refContext } = await colOptions.getRelContext(context);
+      const relatedModel = await colOptions.getRelatedTable(refContext);
+      await relatedModel.getColumns(refContext);
+      return [...(Array.isArray(value) ? value : [value])]
+        .map((v) => {
+          return v[relatedModel.displayValue?.title];
+        })
+        .join(', ');
+    }
+    case UITypes.Decimal: {
+      if (isNaN(Number(value))) return null;
 
-        return Number(value).toFixed(column.meta?.precision ?? 1);
-      }
-      break;
+      return Number(value).toFixed(column.meta?.precision ?? 1);
+    }
     case UITypes.Duration: {
       if (column.meta?.duration === undefined) {
         return value;

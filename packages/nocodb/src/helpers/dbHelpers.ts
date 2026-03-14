@@ -32,7 +32,7 @@ import {
   Sort,
   Source,
 } from '~/models';
-import { excludeAttachmentProps } from '~/utils';
+import { excludeAttachmentProps, timeit } from '~/utils';
 import NcConnectionMgrv2 from '~/utils/common/NcConnectionMgrv2';
 
 export type QueryWithCte = {

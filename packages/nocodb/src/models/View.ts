@@ -51,7 +51,7 @@ import {
 } from '~/utils/modelUtils';
 import { CustomUrl, LinkToAnotherRecordColumn } from '~/models';
 import { cleanCommandPaletteCache } from '~/helpers/commandPaletteHelpers';
-import { isEE } from '~/utils';
+import { isEE, Time } from '~/utils';
 
 const { v4: uuidv4 } = require('uuid');
 
@@ -883,6 +883,7 @@ export default class View implements ViewType {
     return list;
   }
 
+  @Time()
   static async getColumns(
     context: NcContext,
     viewId: string,
@@ -1109,7 +1110,6 @@ export default class View implements ViewType {
       case ViewTypes.CALENDAR:
         return CalendarViewColumn.get(context, colId, ncMeta);
     }
-    return null;
   }
 
   static async insertOrUpdateColumn(
@@ -1232,18 +1232,6 @@ export default class View implements ViewType {
             ncMeta,
           );
       }
-      return await ncMeta.metaInsert2(
-        context.workspace_id,
-        context.base_id,
-        table,
-        {
-          source_id: view.source_id,
-          fk_view_id: viewId,
-          fk_column_id: fkColId,
-          order: colData.order,
-          show: colData.show,
-        },
-      );
     }
   }
 
