@@ -628,6 +628,10 @@ export class MetaService {
             }
           : {};
 
+      console.log(
+        `Batch Load ${groupedRequests.length} items for ${table_id}`,
+        groupedRequests.slice(0, 1),
+      );
       retrieved[queryKey] =
         reqWithFilter.length > 0 && reqWithoutFilter.length <= 0
           ? query.condition(filter).then((x) => x)

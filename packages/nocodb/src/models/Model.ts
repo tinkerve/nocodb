@@ -39,7 +39,7 @@ import {
   prepareForResponse,
 } from '~/utils/modelUtils';
 import { Source } from '~/models';
-import { Time } from 'src/utils';
+import { logflow, Time, traceConditional } from 'src/utils';
 
 const logger = new Logger('Model');
 
@@ -92,13 +92,16 @@ export default class Model implements TableType {
     defaultViewId = undefined,
     updateColumns = true,
   ): Promise<Column[]> {
-    const columns = await Column.list(
-      context,
-      {
-        fk_model_id: this.id,
-        fk_default_view_id: defaultViewId,
-      },
-      ncMeta,
+    logflow(`Load columns for: ${this.id}`);
+    const columns = await traceConditional(false, () =>
+      Column.list(
+        context,
+        {
+          fk_model_id: this.id,
+          fk_default_view_id: defaultViewId,
+        },
+        ncMeta,
+      ),
     );
 
     if (!updateColumns) return columns;

@@ -279,15 +279,14 @@ export class DatasService {
 
     listArgs.customConditions = param.customConditions;
 
-    return traceConditional(false, async () => {
+    return traceConditional(true, async () => {
       const [count, data] = await Promise.all([
         baseModel.count(listArgs, false, param.throwErrorIfInvalidParams),
         (async () => {
           let data = [];
           try {
-            data = await nocoExecute(
-              ast,
-              await baseModel.list(
+            const list = await traceConditional(false, () =>
+              baseModel.list(
                 { ...listArgs, apiVersion: param.apiVersion },
                 {
                   ignoreViewFilterAndSort,
@@ -296,9 +295,22 @@ export class DatasService {
                   limitOverride: param.limitOverride,
                 },
               ),
-              {},
-              listArgs,
             );
+            data = await nocoExecute(ast, list, {}, listArgs);
+            // data = await nocoExecute(
+            //   ast,
+            //   await baseModel.list(
+            //     { ...listArgs, apiVersion: param.apiVersion },
+            //     {
+            //       ignoreViewFilterAndSort,
+            //       throwErrorIfInvalidParams: param.throwErrorIfInvalidParams,
+            //       ignorePagination: param.ignorePagination,
+            //       limitOverride: param.limitOverride,
+            //     },
+            //   ),
+            //   {},
+            //   listArgs,
+            // );
           } catch (e) {
             if (e instanceof NcBaseError || e instanceof NcSDKErrorV2) throw e;
             this.logger.error(e);
